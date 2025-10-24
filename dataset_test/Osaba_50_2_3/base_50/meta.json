@@ -1,0 +1,13 @@
+{
+  "source": "Osaba_50_2_3.xml",
+  "created_at": "2025-10-22T16:47:21.761726Z",
+  "type": "single_depot_single_vehicle_with_time_windows",
+  "time_window_units": "minutes_from_midnight",
+  "tw_penalty_per_min": 1.0,
+  "travel_speed_units_per_min": 80.0,
+  "service_time_units": "minutes",
+  "distance_units": "euclidean (coordinate units)",
+  "n_depots": 1,
+  "n_vehicles": 1,
+  "note": "Base (non-expanded): nodes carry TW 0-1439 and service_time=0; vehicles default to one vehicle with capacity=240, fixed_cost=0."
+}

@@ -1,0 +1,113 @@
+dataset,solver,seed,cmd,ok,return_total_cost,elapsed_wall,cap_violations,cluster_incomplete_block,cluster_refills,cluster_revisit_violations,cluster_split_violations,cluster_violation,distance,fixed,overtime_routes,prohibited_uses,stderr,stdout,tw_penalty,unserved_customers
+dataset_test\Osaba_100_1\base_50_mdmv_tw,esa,42,C:\Program Files\Python313\python.exe -m vrp.experiments.run_experiment --data dataset_test\Osaba_100_1\base_50_mdmv_tw --solver esa --seed 42 --time 5000000.0 --plot,True,89656.70257928506,4.832,0,0,0,0,0,0,88655.77764201991,800.0,0,0,,"solver: esa
+seed: 42
+time: 3.594 s
+total_cost: 89656.70257928506
+details: {'distance': 88655.77764201991, 'fixed': 800.0, 'tw_penalty': 200.92493726513896, 'cap_violations': 0, 'overtime_routes': 0, 'prohibited_uses': 0, 'cluster_refills': 0, 'cluster_violation': 0, 'cluster_revisit_violations': 0, 'cluster_split_violations': 0, 'cluster_incomplete_block': 0, 'unserved_customers': 0}
+solution: Solution(routes=[Route(vehicle_id=0, seq=[0, 69, 70, 66, 67, 68, 65, 64, 63, 62, 61, 98, 97, 99, 100, 96, 95, 94, 93, 92, 91, 0]), Route(vehicle_id=1, seq=[0, 43, 42, 45, 47, 48, 50, 49, 46, 44, 41, 0]), Route(vehicle_id=2, seq=[0, 51, 53, 52, 54, 55, 57, 56, 58, 60, 59, 90, 86, 89, 88, 87, 81, 82, 83, 85, 84, 0]), Route(vehicle_id=3, seq=[0, 1, 3, 2, 8, 7, 9, 10, 5, 6, 4, 0]), Route(vehicle_id=4, seq=[24, 24]), Route(vehicle_id=5, seq=[24, 13, 11, 12, 17, 19, 20, 18, 15, 14, 16, 25, 26, 27, 29, 30, 28, 23, 22, 21, 24]), Route(vehicle_id=6, seq=[24, 33, 34, 31, 32, 38, 39, 40, 37, 36, 35, 24]), Route(vehicle_id=8, seq=[73, 75, 78, 80, 79, 76, 77, 74, 71, 72, 73])])
+Saved plot to: dataset_test\Osaba_100_1\base_50_mdmv_tw\solution.png",200.92493726513896,0
+dataset_test\Osaba_100_3\base_50_mdmv_tw,esa,42,C:\Program Files\Python313\python.exe -m vrp.experiments.run_experiment --data dataset_test\Osaba_100_3\base_50_mdmv_tw --solver esa --seed 42 --time 5000000.0 --plot,True,82684.91395274147,5.261,0,0,0,0,0,0,81230.53987716607,1000.0,0,0,,"solver: esa
+seed: 42
+time: 3.941 s
+total_cost: 82684.91395274147
+details: {'distance': 81230.53987716607, 'fixed': 1000.0, 'tw_penalty': 454.37407557539586, 'cap_violations': 0, 'overtime_routes': 0, 'prohibited_uses': 0, 'cluster_refills': 0, 'cluster_violation': 0, 'cluster_revisit_violations': 0, 'cluster_split_violations': 0, 'cluster_incomplete_block': 0, 'unserved_customers': 0}
+solution: Solution(routes=[Route(vehicle_id=0, seq=[0, 3, 1, 2, 8, 7, 9, 10, 6, 5, 4, 91, 92, 93, 94, 95, 97, 98, 100, 99, 96, 0]), Route(vehicle_id=1, seq=[0, 90, 86, 89, 88, 87, 81, 82, 83, 85, 84, 54, 55, 57, 56, 59, 60, 58, 53, 52, 51, 0]), Route(vehicle_id=2, seq=[0, 0]), Route(vehicle_id=3, seq=[0, 0]), Route(vehicle_id=4, seq=[22, 16, 17, 19, 20, 18, 15, 14, 12, 13, 11, 48, 47, 45, 42, 43, 41, 44, 46, 49, 50, 22]), Route(vehicle_id=5, seq=[22, 25, 26, 27, 29, 30, 28, 24, 23, 21, 22]), Route(vehicle_id=6, seq=[22, 32, 33, 34, 38, 39, 40, 35, 36, 37, 31, 22]), Route(vehicle_id=7, seq=[22, 22]), Route(vehicle_id=8, seq=[73, 75, 78, 80, 79, 76, 77, 74, 71, 72, 73]), Route(vehicle_id=12, seq=[67, 68, 65, 61, 62, 63, 64, 66, 70, 69, 67])])
+Saved plot to: dataset_test\Osaba_100_3\base_50_mdmv_tw\solution.png",454.37407557539586,0
+dataset_test\Osaba_100_4\base_50_mdmv_tw,esa,42,C:\Program Files\Python313\python.exe -m vrp.experiments.run_experiment --data dataset_test\Osaba_100_4\base_50_mdmv_tw --solver esa --seed 42 --time 5000000.0 --plot,True,87336.62302530192,5.285,0,0,1,0,0,0,85725.7841361028,900.0,0,0,,"solver: esa
+seed: 42
+time: 3.944 s
+total_cost: 87336.62302530192
+details: {'distance': 85725.7841361028, 'fixed': 900.0, 'tw_penalty': 710.8388891991, 'cap_violations': 0, 'overtime_routes': 0, 'prohibited_uses': 0, 'cluster_refills': 1, 'cluster_violation': 0, 'cluster_revisit_violations': 0, 'cluster_split_violations': 0, 'cluster_incomplete_block': 0, 'unserved_customers': 0}
+solution: Solution(routes=[Route(vehicle_id=0, seq=[0, 33, 32, 35, 36, 37, 40, 39, 38, 34, 31, 0]), Route(vehicle_id=1, seq=[0, 51, 52, 53, 58, 60, 59, 56, 57, 55, 54, 1, 3, 2, 8, 7, 9, 10, 5, 6, 4, 0]), Route(vehicle_id=2, seq=[0, 11, 12, 14, 15, 17, 19, 20, 18, 16, 13, 0]), Route(vehicle_id=3, seq=[0, 23, 22, 25, 26, 27, 29, 30, 28, 24, 21, 0]), Route(vehicle_id=4, seq=[95, 61, 62, 63, 64, 65, 68, 67, 66, 70, 69, 95]), Route(vehicle_id=5, seq=[95, 96, 100, 99, 98, 97, 94, 93, 92, 91, 95]), Route(vehicle_id=7, seq=[46, 46]), Route(vehicle_id=8, seq=[46, 49, 50, 48, 47, 45, 42, 43, 41, 44, 88, 87, 81, 82, 83, 85, 89, 86, 90, 84, 46]), Route(vehicle_id=10, seq=[73, 75, 78, 80, 79, 76, 77, 74, 71, 72, 73])])
+Saved plot to: dataset_test\Osaba_100_4\base_50_mdmv_tw\solution.png",710.8388891991,0
+dataset_test\Osaba_100_2\base_50_mdmv_tw,esa,42,C:\Program Files\Python313\python.exe -m vrp.experiments.run_experiment --data dataset_test\Osaba_100_2\base_50_mdmv_tw --solver esa --seed 42 --time 5000000.0 --plot,True,90536.37006195195,5.296,0,0,0,0,0,0,89143.49542228489,1000.0,0,0,,"solver: esa
+seed: 42
+time: 3.945 s
+total_cost: 90536.37006195195
+details: {'distance': 89143.49542228489, 'fixed': 1000.0, 'tw_penalty': 392.87463966705707, 'cap_violations': 0, 'overtime_routes': 0, 'prohibited_uses': 0, 'cluster_refills': 0, 'cluster_violation': 0, 'cluster_revisit_violations': 0, 'cluster_split_violations': 0, 'cluster_incomplete_block': 0, 'unserved_customers': 0}
+solution: Solution(routes=[Route(vehicle_id=0, seq=[0, 11, 12, 14, 15, 17, 19, 20, 18, 16, 13, 0]), Route(vehicle_id=1, seq=[0, 10, 9, 7, 8, 2, 1, 3, 6, 5, 4, 0]), Route(vehicle_id=2, seq=[0, 100, 99, 98, 97, 96, 94, 95, 93, 92, 91, 0]), Route(vehicle_id=3, seq=[80, 63, 64, 62, 61, 65, 68, 67, 66, 70, 69, 51, 52, 53, 56, 54, 55, 57, 59, 60, 58, 80]), Route(vehicle_id=4, seq=[80, 80]), Route(vehicle_id=5, seq=[80, 79, 76, 77, 74, 71, 72, 73, 75, 78, 80]), Route(vehicle_id=7, seq=[35, 30, 28, 29, 27, 25, 26, 24, 23, 22, 21, 35]), Route(vehicle_id=8, seq=[35, 36, 37, 40, 38, 39, 32, 33, 34, 31, 35]), Route(vehicle_id=10, seq=[46, 88, 87, 81, 82, 83, 85, 89, 86, 90, 84, 46]), Route(vehicle_id=11, seq=[46, 49, 50, 48, 47, 45, 42, 43, 41, 44, 46])])
+Saved plot to: dataset_test\Osaba_100_2\base_50_mdmv_tw\solution.png",392.87463966705707,0
+dataset_test\Osaba_50_1_1\base_50_mdmv_tw,esa,42,C:\Program Files\Python313\python.exe -m vrp.experiments.run_experiment --data dataset_test\Osaba_50_1_1\base_50_mdmv_tw --solver esa --seed 42 --time 5000000.0 --plot,True,41727.08551166667,2.747,0,0,1,0,0,0,41227.08551166667,500.0,0,0,,"solver: esa
+seed: 42
+time: 1.445 s
+total_cost: 41727.08551166667
+details: {'distance': 41227.08551166667, 'fixed': 500.0, 'tw_penalty': 0.0, 'cap_violations': 0, 'overtime_routes': 0, 'prohibited_uses': 0, 'cluster_refills': 1, 'cluster_violation': 0, 'cluster_revisit_violations': 0, 'cluster_split_violations': 0, 'cluster_incomplete_block': 0, 'unserved_customers': 0}
+solution: Solution(routes=[Route(vehicle_id=0, seq=[0, 13, 12, 15, 16, 17, 19, 20, 18, 14, 11, 0]), Route(vehicle_id=3, seq=[7, 9, 8, 2, 1, 3, 4, 5, 6, 10, 50, 46, 49, 48, 47, 41, 42, 43, 45, 44, 7]), Route(vehicle_id=4, seq=[7, 23, 22, 25, 27, 28, 30, 29, 26, 24, 21, 7]), Route(vehicle_id=5, seq=[7, 7]), Route(vehicle_id=7, seq=[38, 37, 36, 40, 39, 34, 33, 31, 32, 35, 38])])
+Saved plot to: dataset_test\Osaba_50_1_1\base_50_mdmv_tw\solution.png",0.0,0
+dataset_test\Osaba_50_1_2\base_50_mdmv_tw,esa,42,C:\Program Files\Python313\python.exe -m vrp.experiments.run_experiment --data dataset_test\Osaba_50_1_2\base_50_mdmv_tw --solver esa --seed 42 --time 5000000.0 --plot,True,38875.128805992885,2.352,0,0,0,0,0,0,38208.86126395736,500.0,0,0,,"solver: esa
+seed: 42
+time: 1.093 s
+total_cost: 38875.128805992885
+details: {'distance': 38208.86126395736, 'fixed': 500.0, 'tw_penalty': 166.26754203552355, 'cap_violations': 0, 'overtime_routes': 0, 'prohibited_uses': 0, 'cluster_refills': 0, 'cluster_violation': 0, 'cluster_revisit_violations': 0, 'cluster_split_violations': 0, 'cluster_incomplete_block': 0, 'unserved_customers': 0}
+solution: Solution(routes=[Route(vehicle_id=0, seq=[0, 5, 6, 10, 9, 7, 8, 2, 1, 3, 4, 0]), Route(vehicle_id=1, seq=[0, 13, 12, 15, 16, 17, 19, 20, 18, 14, 11, 0]), Route(vehicle_id=3, seq=[49, 49]), Route(vehicle_id=4, seq=[49, 46, 50, 44, 43, 42, 41, 47, 48, 45, 21, 24, 26, 29, 30, 28, 27, 25, 22, 23, 49]), Route(vehicle_id=7, seq=[40, 36, 37, 38, 35, 34, 33, 32, 31, 39, 40])])
+Saved plot to: dataset_test\Osaba_50_1_2\base_50_mdmv_tw\solution.png",166.26754203552355,0
+dataset_test\Osaba_50_1_3\base_50_mdmv_tw,esa,42,C:\Program Files\Python313\python.exe -m vrp.experiments.run_experiment --data dataset_test\Osaba_50_1_3\base_50_mdmv_tw --solver esa --seed 42 --time 5000000.0 --plot,True,57742.09064410963,2.582,0,0,0,0,0,0,56313.09121710982,800.0,0,0,,"solver: esa
+seed: 42
+time: 1.344 s
+total_cost: 57742.09064410963
+details: {'distance': 56313.09121710982, 'fixed': 800.0, 'tw_penalty': 628.9994269998062, 'cap_violations': 0, 'overtime_routes': 0, 'prohibited_uses': 0, 'cluster_refills': 0, 'cluster_violation': 0, 'cluster_revisit_violations': 0, 'cluster_split_violations': 0, 'cluster_incomplete_block': 0, 'unserved_customers': 0}
+solution: Solution(routes=[Route(vehicle_id=0, seq=[0, 0]), Route(vehicle_id=1, seq=[0, 0]), Route(vehicle_id=2, seq=[0, 46, 47, 48, 49, 50, 33, 34, 35, 32, 31, 2, 3, 1, 5, 4, 0]), Route(vehicle_id=3, seq=[0, 26, 28, 27, 30, 29, 45, 41, 42, 43, 44, 21, 24, 25, 22, 23, 0]), Route(vehicle_id=4, seq=[15, 15]), Route(vehicle_id=5, seq=[15, 20, 17, 18, 19, 16, 14, 13, 12, 11, 10, 9, 7, 6, 8, 15]), Route(vehicle_id=6, seq=[15, 15]), Route(vehicle_id=7, seq=[38, 37, 36, 39, 40, 38])])
+Saved plot to: dataset_test\Osaba_50_1_3\base_50_mdmv_tw\solution.png",628.9994269998062,0
+dataset_test\Osaba_50_1_4\base_50_mdmv_tw,esa,42,C:\Program Files\Python313\python.exe -m vrp.experiments.run_experiment --data dataset_test\Osaba_50_1_4\base_50_mdmv_tw --solver esa --seed 42 --time 5000000.0 --plot,True,60941.84581324314,2.839,0,0,0,0,0,0,59997.21831460197,700.0,0,0,,"solver: esa
+seed: 42
+time: 1.609 s
+total_cost: 60941.84581324314
+details: {'distance': 59997.21831460197, 'fixed': 700.0, 'tw_penalty': 244.62749864117598, 'cap_violations': 0, 'overtime_routes': 0, 'prohibited_uses': 0, 'cluster_refills': 0, 'cluster_violation': 0, 'cluster_revisit_violations': 0, 'cluster_split_violations': 0, 'cluster_incomplete_block': 0, 'unserved_customers': 0}
+solution: Solution(routes=[Route(vehicle_id=0, seq=[0, 0]), Route(vehicle_id=1, seq=[0, 46, 47, 48, 49, 50, 34, 35, 33, 32, 31, 26, 28, 27, 30, 29, 2, 1, 3, 5, 4, 0]), Route(vehicle_id=2, seq=[0, 6, 7, 9, 10, 8, 12, 13, 15, 14, 11, 0]), Route(vehicle_id=3, seq=[42, 42]), Route(vehicle_id=4, seq=[42, 24, 25, 22, 23, 21, 42]), Route(vehicle_id=5, seq=[42, 41, 45, 43, 44, 39, 40, 38, 37, 36, 42]), Route(vehicle_id=7, seq=[20, 17, 18, 19, 16, 20])])
+Saved plot to: dataset_test\Osaba_50_1_4\base_50_mdmv_tw\solution.png",244.62749864117598,0
+dataset_test\Osaba_50_2_1\base_50_mdmv_tw,esa,42,C:\Program Files\Python313\python.exe -m vrp.experiments.run_experiment --data dataset_test\Osaba_50_2_1\base_50_mdmv_tw --solver esa --seed 42 --time 5000000.0 --plot,True,42462.968470204694,2.247,0,0,0,0,0,0,41662.62490795218,500.0,0,0,,"solver: esa
+seed: 42
+time: 0.992 s
+total_cost: 42462.968470204694
+details: {'distance': 41662.62490795218, 'fixed': 500.0, 'tw_penalty': 300.34356225250065, 'cap_violations': 0, 'overtime_routes': 0, 'prohibited_uses': 0, 'cluster_refills': 0, 'cluster_violation': 0, 'cluster_revisit_violations': 0, 'cluster_split_violations': 0, 'cluster_incomplete_block': 0, 'unserved_customers': 0}
+solution: Solution(routes=[Route(vehicle_id=0, seq=[0, 1, 2, 4, 5, 7, 9, 10, 8, 6, 3, 12, 13, 14, 18, 19, 20, 15, 16, 17, 11, 0]), Route(vehicle_id=1, seq=[0, 24, 25, 27, 26, 29, 30, 28, 23, 22, 21, 0]), Route(vehicle_id=2, seq=[0, 0]), Route(vehicle_id=4, seq=[47, 45, 41, 42, 43, 44, 46, 49, 50, 48, 47]), Route(vehicle_id=8, seq=[33, 32, 31, 34, 37, 36, 39, 40, 38, 35, 33])])
+Saved plot to: dataset_test\Osaba_50_2_1\base_50_mdmv_tw\solution.png",300.34356225250065,0
+dataset_test\Osaba_50_2_2\base_50_mdmv_tw,esa,42,C:\Program Files\Python313\python.exe -m vrp.experiments.run_experiment --data dataset_test\Osaba_50_2_2\base_50_mdmv_tw --solver esa --seed 42 --time 5000000.0 --plot,True,41724.17595748514,2.658,0,0,0,0,0,0,40558.015531529265,500.0,0,0,,"solver: esa
+seed: 42
+time: 1.404 s
+total_cost: 41724.17595748514
+details: {'distance': 40558.015531529265, 'fixed': 500.0, 'tw_penalty': 666.1604259558692, 'cap_violations': 0, 'overtime_routes': 0, 'prohibited_uses': 0, 'cluster_refills': 0, 'cluster_violation': 0, 'cluster_revisit_violations': 0, 'cluster_split_violations': 0, 'cluster_incomplete_block': 0, 'unserved_customers': 0}
+solution: Solution(routes=[Route(vehicle_id=0, seq=[0, 0]), Route(vehicle_id=1, seq=[0, 46, 50, 49, 48, 47, 45, 44, 43, 42, 41, 23, 28, 30, 29, 26, 27, 25, 24, 22, 21, 0]), Route(vehicle_id=2, seq=[0, 13, 12, 15, 16, 17, 20, 19, 18, 14, 11, 0]), Route(vehicle_id=4, seq=[5, 4, 2, 1, 3, 6, 8, 10, 9, 7, 5]), Route(vehicle_id=7, seq=[33, 35, 38, 40, 39, 36, 37, 34, 31, 32, 33])])
+Saved plot to: dataset_test\Osaba_50_2_2\base_50_mdmv_tw\solution.png",666.1604259558692,0
+dataset_test\Osaba_50_2_4\base_50_mdmv_tw,esa,42,C:\Program Files\Python313\python.exe -m vrp.experiments.run_experiment --data dataset_test\Osaba_50_2_4\base_50_mdmv_tw --solver esa --seed 42 --time 5000000.0 --plot,True,54119.16607887967,2.71,0,0,0,0,0,0,53036.148313251615,1000.0,0,0,,"solver: esa
+seed: 42
+time: 1.469 s
+total_cost: 54119.16607887967
+details: {'distance': 53036.148313251615, 'fixed': 1000.0, 'tw_penalty': 83.01776562806458, 'cap_violations': 0, 'overtime_routes': 0, 'prohibited_uses': 0, 'cluster_refills': 0, 'cluster_violation': 0, 'cluster_revisit_violations': 0, 'cluster_split_violations': 0, 'cluster_incomplete_block': 0, 'unserved_customers': 0}
+solution: Solution(routes=[Route(vehicle_id=0, seq=[0, 0]), Route(vehicle_id=1, seq=[0, 0]), Route(vehicle_id=2, seq=[0, 6, 8, 10, 9, 7, 5, 4, 3, 2, 1, 0]), Route(vehicle_id=3, seq=[0, 31, 33, 32, 35, 34, 48, 47, 49, 50, 46, 0]), Route(vehicle_id=4, seq=[16, 16]), Route(vehicle_id=5, seq=[16, 20, 17, 18, 19, 11, 12, 14, 13, 15, 16]), Route(vehicle_id=7, seq=[38, 38]), Route(vehicle_id=8, seq=[38, 40, 39, 37, 36, 30, 29, 27, 26, 28, 38]), Route(vehicle_id=10, seq=[21, 21]), Route(vehicle_id=11, seq=[21, 45, 41, 44, 43, 42, 22, 23, 25, 24, 21])])
+Saved plot to: dataset_test\Osaba_50_2_4\base_50_mdmv_tw\solution.png",83.01776562806458,0
+dataset_test\Osaba_50_2_3\base_50_mdmv_tw,esa,42,C:\Program Files\Python313\python.exe -m vrp.experiments.run_experiment --data dataset_test\Osaba_50_2_3\base_50_mdmv_tw --solver esa --seed 42 --time 5000000.0 --plot,True,62991.26631952654,3.317,0,0,0,0,0,0,61597.59152542647,1000.0,0,0,,"solver: esa
+seed: 42
+time: 2.031 s
+total_cost: 62991.26631952654
+details: {'distance': 61597.59152542647, 'fixed': 1000.0, 'tw_penalty': 393.6747941000665, 'cap_violations': 0, 'overtime_routes': 0, 'prohibited_uses': 0, 'cluster_refills': 0, 'cluster_violation': 0, 'cluster_revisit_violations': 0, 'cluster_split_violations': 0, 'cluster_incomplete_block': 0, 'unserved_customers': 0}
+solution: Solution(routes=[Route(vehicle_id=0, seq=[0, 0]), Route(vehicle_id=1, seq=[0, 5, 4, 3, 2, 1, 26, 27, 29, 30, 28, 47, 48, 50, 49, 46, 0]), Route(vehicle_id=2, seq=[0, 0]), Route(vehicle_id=3, seq=[22, 45, 41, 44, 43, 42, 6, 8, 10, 9, 7, 23, 25, 24, 21, 22]), Route(vehicle_id=4, seq=[22, 22]), Route(vehicle_id=5, seq=[22, 22]), Route(vehicle_id=6, seq=[33, 32, 31, 35, 34, 40, 39, 36, 37, 38, 33]), Route(vehicle_id=7, seq=[33, 33]), Route(vehicle_id=10, seq=[20, 19, 18, 17, 16, 13, 11, 12, 14, 15, 20]), Route(vehicle_id=11, seq=[20, 20])])
+Saved plot to: dataset_test\Osaba_50_2_3\base_50_mdmv_tw\solution.png",393.6747941000665,0
+dataset_test\Osaba_80_1\base_50_mdmv_tw,esa,42,C:\Program Files\Python313\python.exe -m vrp.experiments.run_experiment --data dataset_test\Osaba_80_1\base_50_mdmv_tw --solver esa --seed 42 --time 5000000.0 --plot,True,67643.578279441,4.236,0,0,0,0,0,0,66511.74325642585,800.0,0,0,,"solver: esa
+seed: 42
+time: 2.889 s
+total_cost: 67643.578279441
+details: {'distance': 66511.74325642585, 'fixed': 800.0, 'tw_penalty': 331.8350230151558, 'cap_violations': 0, 'overtime_routes': 0, 'prohibited_uses': 0, 'cluster_refills': 0, 'cluster_violation': 0, 'cluster_revisit_violations': 0, 'cluster_split_violations': 0, 'cluster_incomplete_block': 0, 'unserved_customers': 0}
+solution: Solution(routes=[Route(vehicle_id=0, seq=[0, 1, 3, 2, 8, 7, 9, 10, 5, 6, 4, 0]), Route(vehicle_id=1, seq=[0, 0]), Route(vehicle_id=2, seq=[0, 51, 52, 53, 58, 60, 59, 56, 57, 55, 54, 41, 44, 46, 49, 50, 48, 47, 45, 42, 43, 0]), Route(vehicle_id=3, seq=[28, 35, 36, 37, 40, 38, 39, 32, 33, 34, 31, 28]), Route(vehicle_id=4, seq=[28, 20, 18, 19, 17, 14, 15, 12, 11, 13, 16, 28]), Route(vehicle_id=5, seq=[28, 30, 29, 27, 25, 26, 24, 23, 22, 21, 28]), Route(vehicle_id=6, seq=[73, 75, 78, 80, 79, 76, 77, 74, 71, 72, 73]), Route(vehicle_id=9, seq=[70, 66, 67, 68, 65, 64, 63, 62, 61, 69, 70])])
+Saved plot to: dataset_test\Osaba_80_1\base_50_mdmv_tw\solution.png",331.8350230151558,0
+dataset_test\Osaba_80_2\base_50_mdmv_tw,esa,42,C:\Program Files\Python313\python.exe -m vrp.experiments.run_experiment --data dataset_test\Osaba_80_2\base_50_mdmv_tw --solver esa --seed 42 --time 5000000.0 --plot,True,71921.77712595569,4.206,0,0,0,0,0,0,71078.64729939876,700.0,0,0,,"solver: esa
+seed: 42
+time: 2.83 s
+total_cost: 71921.77712595569
+details: {'distance': 71078.64729939876, 'fixed': 700.0, 'tw_penalty': 143.12982655693463, 'cap_violations': 0, 'overtime_routes': 0, 'prohibited_uses': 0, 'cluster_refills': 0, 'cluster_violation': 0, 'cluster_revisit_violations': 0, 'cluster_split_violations': 0, 'cluster_incomplete_block': 0, 'unserved_customers': 0}
+solution: Solution(routes=[Route(vehicle_id=0, seq=[0, 33, 32, 35, 36, 37, 40, 39, 38, 34, 31, 0]), Route(vehicle_id=1, seq=[0, 4, 5, 6, 3, 1, 2, 8, 7, 9, 10, 0]), Route(vehicle_id=2, seq=[0, 69, 70, 66, 67, 68, 65, 64, 63, 62, 61, 56, 58, 60, 59, 57, 55, 54, 52, 53, 51, 0]), Route(vehicle_id=3, seq=[20, 20]), Route(vehicle_id=4, seq=[20, 29, 27, 30, 28, 26, 25, 24, 23, 22, 21, 20]), Route(vehicle_id=5, seq=[20, 48, 47, 45, 42, 43, 41, 44, 46, 49, 50, 14, 15, 12, 11, 13, 16, 18, 17, 19, 20]), Route(vehicle_id=7, seq=[73, 75, 78, 80, 79, 76, 77, 74, 71, 72, 73])])
+Saved plot to: dataset_test\Osaba_80_2\base_50_mdmv_tw\solution.png",143.12982655693463,0
+dataset_test\Osaba_80_3\base_50_mdmv_tw,esa,42,C:\Program Files\Python313\python.exe -m vrp.experiments.run_experiment --data dataset_test\Osaba_80_3\base_50_mdmv_tw --solver esa --seed 42 --time 5000000.0 --plot,True,73946.1332341534,3.957,0,0,0,0,0,0,72606.61209320283,900.0,0,0,,"solver: esa
+seed: 42
+time: 2.685 s
+total_cost: 73946.1332341534
+details: {'distance': 72606.61209320283, 'fixed': 900.0, 'tw_penalty': 439.52114095058755, 'cap_violations': 0, 'overtime_routes': 0, 'prohibited_uses': 0, 'cluster_refills': 0, 'cluster_violation': 0, 'cluster_revisit_violations': 0, 'cluster_split_violations': 0, 'cluster_incomplete_block': 0, 'unserved_customers': 0}
+solution: Solution(routes=[Route(vehicle_id=0, seq=[0, 41, 42, 43, 44, 45, 47, 46, 48, 73, 74, 75, 76, 77, 80, 79, 78, 0]), Route(vehicle_id=1, seq=[0, 20, 24, 23, 22, 21, 18, 19, 17, 29, 30, 31, 32, 26, 27, 28, 25, 0]), Route(vehicle_id=2, seq=[0, 4, 5, 6, 3, 1, 2, 8, 7, 0]), Route(vehicle_id=3, seq=[0, 0]), Route(vehicle_id=4, seq=[40, 10, 12, 13, 15, 16, 14, 11, 9, 40]), Route(vehicle_id=5, seq=[40, 40]), Route(vehicle_id=6, seq=[40, 38, 36, 39, 37, 34, 35, 33, 72, 71, 65, 66, 67, 69, 70, 68, 40]), Route(vehicle_id=8, seq=[59, 58, 57, 60, 62, 63, 64, 61, 59]), Route(vehicle_id=12, seq=[55, 54, 56, 53, 52, 51, 50, 49, 55])])
+Saved plot to: dataset_test\Osaba_80_3\base_50_mdmv_tw\solution.png",439.52114095058755,0
+dataset_test\Osaba_80_4\base_50_mdmv_tw,esa,42,C:\Program Files\Python313\python.exe -m vrp.experiments.run_experiment --data dataset_test\Osaba_80_4\base_50_mdmv_tw --solver esa --seed 42 --time 5000000.0 --plot,True,73514.77309844807,4.059,0,0,0,0,0,0,72470.70567184899,1000.0,0,0,,"solver: esa
+seed: 42
+time: 2.839 s
+total_cost: 73514.77309844807
+details: {'distance': 72470.70567184899, 'fixed': 1000.0, 'tw_penalty': 44.06742659907843, 'cap_violations': 0, 'overtime_routes': 0, 'prohibited_uses': 0, 'cluster_refills': 0, 'cluster_violation': 0, 'cluster_revisit_violations': 0, 'cluster_split_violations': 0, 'cluster_incomplete_block': 0, 'unserved_customers': 0}
+solution: Solution(routes=[Route(vehicle_id=0, seq=[0, 14, 16, 13, 11, 9, 10, 12, 15, 18, 19, 20, 22, 24, 23, 21, 17, 0]), Route(vehicle_id=1, seq=[0, 0]), Route(vehicle_id=2, seq=[0, 78, 79, 80, 77, 76, 75, 74, 73, 0]), Route(vehicle_id=3, seq=[0, 4, 5, 6, 3, 1, 2, 8, 7, 0]), Route(vehicle_id=4, seq=[68, 33, 34, 35, 40, 39, 37, 36, 38, 71, 65, 66, 67, 69, 72, 70, 68]), Route(vehicle_id=5, seq=[68, 44, 45, 47, 46, 43, 41, 42, 48, 62, 63, 60, 57, 58, 59, 61, 64, 68]), Route(vehicle_id=6, seq=[68, 68]), Route(vehicle_id=7, seq=[68, 68]), Route(vehicle_id=8, seq=[29, 30, 31, 32, 26, 27, 28, 25, 29]), Route(vehicle_id=12, seq=[56, 50, 49, 51, 52, 53, 54, 55, 56])])
+Saved plot to: dataset_test\Osaba_80_4\base_50_mdmv_tw\solution.png",44.06742659907843,0

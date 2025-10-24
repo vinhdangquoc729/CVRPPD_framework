@@ -1,0 +1,2 @@
+vehicle_id,depot_id,capacity,start_time,end_time,fixed_cost,variable_cost_per_distance
+0,0,240,0,1439,0.0,1.0
