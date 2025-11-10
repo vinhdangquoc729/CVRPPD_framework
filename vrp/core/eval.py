@@ -3,8 +3,8 @@ from .problem import Problem, Node
 from .solution import Solution
 
 def evaluate(problem: Problem, sol: Solution, return_details=False) -> Tuple[float, dict]:
-    BIG = 1e6      # phạt cứng cho vi phạm luật cụm / cung cấm
-    BIG_CAP = 1e5  # phạt tải / overtime
+    BIG = 1e6      # phạt đi vào đường cấm
+    BIG_CAP = 1e5  # phạt tải trọng quá giờ
     speed = getattr(problem, "speed_units_per_min", 50.0)
 
     cost = 0.0
@@ -24,13 +24,13 @@ def evaluate(problem: Problem, sol: Solution, return_details=False) -> Tuple[flo
     }
 
     nodes = problem.nodes
-    # --------- (A) Chuẩn bị tập khách theo cụm ----------
+    # Chuẩn bị tập khách theo cụm
     cluster_to_all_customers: Dict[int, Set[int]] = {}
     for nid, nd in nodes.items():
         if not nd.is_depot:
             cluster_to_all_customers.setdefault(nd.cluster, set()).add(nid)
 
-    # --------- (B) Ánh xạ cụm -> các route đang phục vụ ----------
+    # Ánh xạ cụm -> các route đang phục vụ
     cluster_to_routes: Dict[int, List[int]] = {}
     served_customers_global: Set[int] = set()
 
@@ -42,21 +42,20 @@ def evaluate(problem: Problem, sol: Solution, return_details=False) -> Tuple[flo
             served_customers_global.add(nid)
             cluster_to_routes.setdefault(nd.cluster, []).append(r_idx)
 
-    # 1) Không chia cụm: nếu 1 cụm xuất hiện ở >1 route -> vi phạm
+    # Phạt vi phạm ràng buộc cụm
     for c, routes_list in cluster_to_routes.items():
         if len(set(routes_list)) > 1:
             details["cluster_split_violations"] += 1
             cost += BIG
 
-    # 2) Tất cả khách phải được phục vụ
+    # Tất cả khách phải được phục vụ
     all_customers = set().union(*cluster_to_all_customers.values()) if cluster_to_all_customers else set()
     unserved = all_customers - served_customers_global
     if unserved:
         details["unserved_customers"] = len(unserved)
-        # Tuỳ sách lược: phạt lớn để coi nghiệm không hợp lệ
-        cost += BIG
+        cost += BIG * len(unserved)
 
-    # --------- (C) Bắt đầu chấm chi phí, với SPD + refill FULL + contiguity ----------
+    # Hàm tính chi phí đi từ u đến v
     def add_leg(u: int, v: int, var_cost: float) -> float:
         nonlocal cost
         if (u, v) in problem.prohibited:
@@ -64,23 +63,22 @@ def evaluate(problem: Problem, sol: Solution, return_details=False) -> Tuple[flo
             cost += BIG
         dist = problem.d(u, v)
         details["distance"] += dist
-        cost += dist * var_cost
-        return dist  # 1 đơn vị = 1 phút (đổi nếu có speed)
+        cost += dist * var_cost 
+        return dist
 
     for route in sol.routes:
         veh = next(v for v in problem.vehicles if v.id == route.vehicle_id)
         Q = veh.capacity
         depot_id = veh.depot_id
 
-        # Chi phí cố định
+        # Chi phí sử dụng xe
         details["fixed"] += veh.fixed_cost
         cost += veh.fixed_cost
 
         time = veh.start_time
-        load_deliv = Q     # xuất phát ở depot -> FULL
+        load_deliv = Q     
         load_pick  = 0
 
-        # Chuẩn hoá depot đầu/cuối
         seq = list(route.seq)
         if not seq or seq[0] != depot_id: seq = [depot_id] + seq
         if seq[-1] != depot_id: seq = seq + [depot_id]
@@ -97,18 +95,16 @@ def evaluate(problem: Problem, sol: Solution, return_details=False) -> Tuple[flo
             if not node_v.is_depot:
                 cur_cluster = node_v.cluster
 
-                # 3) Contiguity (revisit trong cùng route)
+                # Phạt vi phạm cụm
                 if cur_cluster in closed_clusters:
                     details["cluster_revisit_violations"] += 1
                     cost += BIG
 
                 first_of_cluster = (cur_cluster != last_cluster)
                 if first_of_cluster:
-                    # Đóng cụm trước nếu vừa chuyển cụm
                     if last_cluster is not None and last_cluster != cur_cluster:
                         closed_clusters.add(last_cluster)
 
-                    # --- Block của cụm này trong route: phải chứa đủ toàn bộ khách của cụm ---
                     full_set = cluster_to_all_customers.get(cur_cluster, set())
                     block_set: Set[int] = set()
                     j = i + 1
@@ -119,17 +115,15 @@ def evaluate(problem: Problem, sol: Solution, return_details=False) -> Tuple[flo
                         block_set.add(w); j += 1
 
                     if block_set != full_set:
-                        # Route đã vào cụm nhưng block không chứa đủ tất cả khách của cụm (phần còn lại nằm route khác hoặc mất)
+                        # Phạt không thăm hết khách trong cụm
                         details["cluster_incomplete_block"] += 1
                         cost += BIG
 
-                    # --- Nhu cầu giao của block ---
                     need = sum(nodes[k].demand_delivery for k in block_set)
                     if need > Q:
                         details["cluster_violation"] += 1
                         cost += BIG
 
-                    # Nếu thiếu delivery và đang không ở depot -> quay depot refill FULL
                     if load_deliv < min(need, Q) and u != depot_id:
                         time += add_leg(u, depot_id, veh.var_cost_per_dist) / speed   # u->depot
                         load_pick = 0
@@ -140,22 +134,20 @@ def evaluate(problem: Problem, sol: Solution, return_details=False) -> Tuple[flo
 
                 last_cluster = cur_cluster
             else:
-                # đến depot: bỏ hết & refill FULL
+                # Đến depot: reset tải
                 load_pick = 0
                 load_deliv = Q
                 if last_cluster is not None:
                     closed_clusters.add(last_cluster)
                 last_cluster = None
 
-            # đi cạnh gốc nếu chưa vừa refill u->depot->v
             if not refill_done:
                 time += add_leg(u, v, veh.var_cost_per_dist) / speed
 
-            # xử lý tại node v
             if node_v.is_depot:
                 pass
             else:
-                # SPD: giao trước, nhặt sau
+                # Đến điểm: giao hàng mới, thu hàng cũ
                 load_deliv -= node_v.demand_delivery
                 if load_deliv < 0:
                     details["cap_violations"] += 1
@@ -168,18 +160,19 @@ def evaluate(problem: Problem, sol: Solution, return_details=False) -> Tuple[flo
                     overflow = (load_deliv + load_pick) - Q
                     load_pick = max(0, load_pick - overflow)
 
-                # TW: chờ miễn phí, phạt muộn
+                # Time windows
+                # Sớm
                 if (node_v.tw_open is not None) and (time < node_v.tw_open):
                     time = node_v.tw_open
+                # Muộn
                 if (node_v.tw_close is not None) and (time > node_v.tw_close):
                     late = time - node_v.tw_close
                     details["tw_penalty"] += late * problem.tw_penalty_per_min
                     cost += late * problem.tw_penalty_per_min
-
                 time += node_v.service_time
-
             i += 1
 
+        # Phạt quá giờ
         if time > veh.end_time:
             details["overtime_routes"] += 1
             cost += BIG_CAP

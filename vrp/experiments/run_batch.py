@@ -92,7 +92,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data_glob", required=True,
                     help='Glob tới thư mục instance (vd: "dataset_test/*/base_50")')
-    ap.add_argument("--solvers", nargs="+", default=["dfa"], choices=["dfa","ga","esa"])
+    ap.add_argument("--solvers", nargs="+", default=["dfa"], choices=["dfa","ga","esa","dfa_pd","esa_pd","ga_hct_pd", "cluster_ga"],)
     ap.add_argument("--seeds", nargs="+", type=int, default=[42])
     ap.add_argument("--time", type=float, default=5.0)
     ap.add_argument("--plot", action="store_true")
