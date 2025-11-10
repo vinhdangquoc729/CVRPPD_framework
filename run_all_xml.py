@@ -8,7 +8,7 @@ PYTHON  = "python"                        # hoặc đường dẫn python cụ t
 
 COMMON_ARGS = [
     "--expand-base",
-    "--del-mult-from-original", "2.0",
+    "--del-mult-from-original", "1.0",
     "--pd-target-ratio", "1.0",
     "--veh-per-depot-min", "3", "--veh-per-depot-max", "4",
     "--veh-capacities", "80", "100", "120", "150",

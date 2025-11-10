@@ -1,6 +1,6 @@
 {
   "source": "Osaba_80_2.xml",
-  "created_at": "2025-11-10T05:30:53.637074Z",
+  "created_at": "2025-11-10T12:54:23.934290Z",
   "type": "multi_depot_multi_vehicle_with_time_windows",
   "time_window_units": "minutes_from_midnight",
   "tw_penalty_per_min": 10.0,
@@ -12,8 +12,8 @@
   "pd_only": true,
   "pd_target_ratio": 1.0,
   "original_total_delivery": 600.0,
-  "target_delivery_total": 1200.0,
-  "target_pickup_total": 1200.0,
-  "delivery_mult_from_original": 2.0,
+  "target_delivery_total": 600.0,
+  "target_pickup_total": 600.0,
+  "delivery_mult_from_original": 1.0,
   "lock_both_totals": true
 }

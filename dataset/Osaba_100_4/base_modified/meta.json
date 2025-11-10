@@ -1,6 +1,6 @@
 {
   "source": "Osaba_100_4.xml",
-  "created_at": "2025-11-10T05:30:46.853747Z",
+  "created_at": "2025-11-10T12:54:17.724583Z",
   "type": "single_depot_single_vehicle_with_time_windows",
   "time_window_units": "minutes_from_midnight",
   "tw_penalty_per_min": 10.0,
