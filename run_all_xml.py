@@ -16,7 +16,7 @@ COMMON_ARGS = [
     # "--synth-clusters-min", "20", "--synth-clusters-max", "50",
     "--tw-open-min", "480", "--tw-open-max", "720",
     "--tw-close-min", "780", "--tw-close-max", "1200",
-    "--tw-min-width", "60",
+    "--tw-min-width", "420",
     "--seed", "42",
 ]
 
