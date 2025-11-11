@@ -1,4 +1,4 @@
-# Osaba VRP (PD-only) — Normalized & Expanded for `Osaba_50_1_4.xml` (2025-11-10T12:54:20.072682Z)
+# Osaba VRP (PD-only) — Normalized & Expanded for `Osaba_50_1_4.xml` (2025-11-11T03:27:19.929270Z)
 
 - PD-only: mỗi khách chỉ P hoặc D.
 - Nếu --lock-both-totals: 
