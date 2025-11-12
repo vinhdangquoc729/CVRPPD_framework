@@ -2,9 +2,9 @@ from __future__ import annotations
 import math, random, time
 from typing import List, Dict, Tuple
 from .solver_base import Solver
-from ..core.problem import Problem
+from ..core.problem_modified import Problem
 from ..core.solution import Solution, Route
-from ..core.eval_modified import evaluate_modified  # dùng evaluator PD mới
+from ..core.eval_modified import evaluate_modified 
 
 class ESASolverPD(Solver):
     def __init__(self, problem: Problem, seed: int = 42,
@@ -21,7 +21,6 @@ class ESASolverPD(Solver):
         self.alpha = alpha
         self.patience_iters = patience_iters
 
-    # các helper
     def _customers(self) -> List[int]:
         return [i for i, nd in self.problem.nodes.items() if not nd.is_depot]
 
@@ -65,7 +64,6 @@ class ESASolverPD(Solver):
             pop.append(Solution(routes=routes))
         return pop
 
-    # ---------- Tiện ích route ----------
     def _customers_of_route(self, r: Route) -> List[int]:
         P = self.problem
         return [i for i in r.seq if not P.nodes[i].is_depot]
@@ -75,7 +73,6 @@ class ESASolverPD(Solver):
         dep = next(v.depot_id for v in P.vehicles if v.id == r.vehicle_id)
         r.seq = [dep] + custs + [dep]
 
-    # ---------- Láng giềng (cấp-khách) ----------
     def _mv_intra_insert(self, s: Solution) -> None:
         routes = [rt for rt in s.routes if len(self._customers_of_route(rt)) >= 2]
         if not routes: return

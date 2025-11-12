@@ -17,7 +17,7 @@ from ..solvers.ga_pd import GAPDSolver as _GASolver
 from ..solvers.dfa_modified import DFASolverPD
 from ..solvers.esa_modified import ESASolverPD
 from ..solvers.ga_pd_hct import GAPD_HCT_Solver as _GAHCTSolver, EncodedSolution, decode_to_solution
-from ..solvers.cluster_ga import ClusterGASolver as _ClusterGASolver
+from ..solvers.cluster_ga_modified import ClusterGASolver as _ClusterGASolver
 
 # ---------- Progress data structure ----------
 class ProgressLog:

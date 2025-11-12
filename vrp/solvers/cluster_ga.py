@@ -5,14 +5,13 @@ from typing import List, Dict, Tuple, Optional
 from .solver_base import Solver
 from ..core.problem import Problem, Node
 from ..core.solution import Solution, Route
-from ..core.eval_modified import evaluate_modified as evaluator
+from ..core.eval import evaluate as evaluator
 
 
 def _kmeans(points: List[Tuple[float, float]], k: int, rng: random.Random, max_iter: int = 50) -> List[int]:
     n = len(points)
     k = max(1, min(k, n))
 
-    # Chọn tâm
     centroids: List[Tuple[float, float]] = [points[rng.randrange(n)]]
     for _ in range(1, k):
         d2 = []

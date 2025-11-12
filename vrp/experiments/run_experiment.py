@@ -1,12 +1,16 @@
-import argparse, yaml, time
+import argparse, time
 from pathlib import Path
+import yaml
+
 from ..data.loader import load_problem
+from ..data.loader_modified import load_problem_modified
 
 from ..solvers.dfa import DFASolver
-from ..solvers.ga_pd_hct import GAPD_HCT_Solver
+from ..solvers.ga_hct_pd import GA_HCT_PD_Solver
 from ..solvers.esa import ESASolver
 from ..solvers.dfa_modified import DFASolverPD
 from ..solvers.esa_modified import ESASolverPD
+from ..solvers.cluster_ga_modified import ClusterGASolverPD
 from ..solvers.cluster_ga import ClusterGASolver
 
 from ..core.eval import evaluate
@@ -20,8 +24,9 @@ SOLVERS = {
     "esa": ESASolver,
     "dfa_pd": DFASolverPD,
     "esa_pd": ESASolverPD,
-    "ga_hct_pd": GAPD_HCT_Solver,
-    "cluster_ga_pd": ClusterGASolver,
+    "ga_hct_pd": GA_HCT_PD_Solver,
+    "cluster_ga": ClusterGASolver,
+    "cluster_ga_pd": ClusterGASolverPD,
 }
 
 def main():
@@ -30,45 +35,47 @@ def main():
     ap.add_argument("--solver", choices=SOLVERS.keys(), default="dfa")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--time", type=float, default=30.0, help="time limit seconds (advisory)")
-    ap.add_argument("--config", type=str, default=None, help="YAML config to pass into solver (e.g., pop_size, gamma)")
+    ap.add_argument("--config", type=str, default=None, help="YAML to pass into solver (e.g., pop_size, gamma)")
     ap.add_argument("--plot", action="store_true", help="Save a PNG visualization of the solution")
-    ap.add_argument("--plot_path", type=str, default=None, help="Output path for PNG (default: <data>/solution.png)")
+    ap.add_argument("--plot_path", type=str, default=None, help="Output path for PNG (default: <data>/solution_<solver>.png)")
     ap.add_argument("--annotate", action="store_true", help="Annotate customer IDs on plot")
-
-    # NEW: chọn evaluator
     ap.add_argument(
         "--evaluator",
         choices=["orig", "pd"],
         default=None,
-        help="orig = evaluate (AC-VRP-SPDVCFP), pd = evaluate_modified (biến thể pickup/delivery). "
-             "Nếu bỏ trống sẽ tự suy ra theo tên solver (_pd -> dùng pd)."
+        help="orig = evaluate (AC-VRP-SPDVCFP), pd = evaluate_modified (VRPPD với precedence). "
+             "Nếu bỏ trống sẽ tự suy theo tên solver (_pd => pd)."
     )
     args = ap.parse_args()
 
-    # chọn evaluator
     if args.evaluator is None:
         use_eval_modified = args.solver.endswith("_pd")
     else:
         use_eval_modified = (args.evaluator == "pd")
     EVAL = evaluate_modified if use_eval_modified else evaluate
 
-    # load problem & config
-    prob = load_problem(args.data)
+    if use_eval_modified:
+        prob = load_problem_modified(args.data)
+        chosen_loader = "modified"
+    else:
+        prob = load_problem(args.data)
+        chosen_loader = "orig"
+
     cfg = {}
     if args.config:
         cfg = yaml.safe_load(Path(args.config).read_text()) or {}
 
-    # Thiết lập solver
     SolverCls = SOLVERS[args.solver]
     solver = SolverCls(prob, seed=args.seed, **cfg)
 
-    # Giải
     t0 = time.time()
     sol = solver.solve(time_limit_sec=args.time)
     elapsed = time.time() - t0
     cost, det = EVAL(prob, sol, return_details=True)
 
-    # In kết quả
+    print("data_dir:", str(Path(args.data).resolve()))
+    print("loader:", chosen_loader)
+    print("evaluator:", "pd" if use_eval_modified else "orig")
     print("solver:", args.solver)
     print("seed:", args.seed)
     print("time:", round(elapsed, 3), "s")

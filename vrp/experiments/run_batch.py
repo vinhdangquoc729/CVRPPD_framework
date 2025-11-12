@@ -1,69 +1,68 @@
 # vrp/experiments/run_batch.py
 from __future__ import annotations
-import argparse, csv, os, sys, subprocess, shlex, time
+import argparse, csv, subprocess, time, ast, sys
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import ast
-import sys
+from typing import List, Optional
 
-RUN_ONE = [sys.executable, "-m", "vrp.experiments.run_experiment"]  # dùng python hiện tại
+RUN_ONE: List[str] = [sys.executable, "-m", "vrp.experiments.run_experiment"]  # dùng python hiện tại
 
-def build_cmd_args(data: str, solver: str, seed: int, tlimit: float, plot: bool, config: str|None):
+SOLVER_CHOICES = [
+    "dfa", "esa",
+    "dfa_pd", "esa_pd",
+    "ga_hct_pd",
+    "cluster_ga", "cluster_ga_pd",
+]
+
+def build_cmd_args(
+    data: str, solver: str, seed: int, tlimit: float,
+    plot: bool, config: Optional[str],
+    annotate: bool, plot_path: Optional[str], evaluator: Optional[str]
+) -> List[str]:
     args = RUN_ONE + ["--data", data, "--solver", solver, "--seed", str(seed), "--time", str(tlimit)]
     if config:
         args += ["--config", config]
+    if evaluator:
+        args += ["--evaluator", evaluator]
     if plot:
         args += ["--plot"]
+        if annotate:
+            args += ["--annotate"]
+        if plot_path:
+            args += ["--plot_path", plot_path]
     return args
 
-def build_cmd(data: str, solver: str, seed: int, tlimit: float, plot: bool, config: str|None):
-    parts = [
-        RUN_ONE,
-        f"--data {shlex.quote(str(data))}",
-        f"--solver {solver}",
-        f"--seed {seed}",
-        f"--time {tlimit}",
-    ]
-    if config:
-        parts.append(f"--config {shlex.quote(str(config))}")
-    if plot:
-        parts.append("--plot")
-    return " ".join(parts)
-
-def run_once(cmd_args: str, cwd: str|None=None) -> dict:
+def run_once(cmd_args: List[str], cwd: Optional[str]=None) -> dict:
     """Chạy 1 experiment, parse stdout về dict kết quả."""
-    # Windows note: dùng shell=True để "-m" hoạt động trong cùng env python
     t0 = time.time()
     proc = subprocess.run(cmd_args, cwd=cwd, capture_output=True, text=True)
     elapsed = time.time() - t0
 
     out = proc.stdout.strip()
     err = proc.stderr.strip()
-    if proc.returncode != 0:
-        return {
-            "ok": False,
-            "error": f"returncode={proc.returncode}",
-            "stdout": out,
-            "stderr": err,
-            "elapsed_wall": round(elapsed, 3),
-        }
+    res = {
+        "ok": proc.returncode == 0,
+        "stdout": out,
+        "stderr": err,
+        "elapsed_wall": round(elapsed, 3),
+        "returncode": proc.returncode,
+        "cmd_pretty": " ".join(cmd_args),
+    }
+    if not res["ok"]:
+        return res
 
     # Parse các dòng in từ run_experiment.py
-    # Kỳ vọng có các dòng:
-    # solver: ...
-    # seed: ...
-    # time: XXX s
-    # total_cost: NNN
-    # details: {...}
-    res = {"ok": True, "stdout": out, "stderr": err, "elapsed_wall": round(elapsed, 3)}
     for line in out.splitlines():
         line = line.strip()
         if line.startswith("solver:"):
             res["solver"] = line.split("solver:", 1)[1].strip()
         elif line.startswith("seed:"):
-            res["seed"] = int(line.split("seed:", 1)[1].strip())
+            try:
+                res["seed"] = int(line.split("seed:", 1)[1].strip())
+            except Exception:
+                pass
         elif line.startswith("time:"):
-            # dạng: "time: 5.123 s"
+            # "time: 5.123 s"
             try:
                 val = line.split("time:", 1)[1].strip().split()[0]
                 res["time_printed"] = float(val)
@@ -82,7 +81,7 @@ def run_once(cmd_args: str, cwd: str|None=None) -> dict:
                 res["details_parse_error"] = str(e)
     return res
 
-def expand_data_glob(data_glob: str) -> list[str]:
+def expand_data_glob(data_glob: str) -> List[str]:
     paths = sorted(str(p) for p in Path().glob(data_glob))
     if not paths:
         raise SystemExit(f"[run_batch] Không tìm thấy instance nào với glob: {data_glob}")
@@ -92,24 +91,29 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data_glob", required=True,
                     help='Glob tới thư mục instance (vd: "dataset_test/*/base_50")')
-    ap.add_argument("--solvers", nargs="+", default=["dfa"], choices=["dfa","ga","esa","dfa_pd","esa_pd","ga_hct_pd", "cluster_ga"],)
+    ap.add_argument("--solvers", nargs="+", default=["dfa"],
+                    choices=SOLVER_CHOICES)
     ap.add_argument("--seeds", nargs="+", type=int, default=[42])
     ap.add_argument("--time", type=float, default=5.0)
     ap.add_argument("--plot", action="store_true")
+    ap.add_argument("--annotate", action="store_true", help="Kèm nhãn ID khách trên hình")
+    ap.add_argument("--plot_path", type=str, default=None, help="Ghi đè đường dẫn PNG")
     ap.add_argument("--config", type=str, default=None)
+    ap.add_argument("--evaluator", choices=["orig", "pd"], default=None,
+                    help="orig=evaluate, pd=evaluate_modified; mặc định suy theo tên solver")
     ap.add_argument("--jobs", type=int, default=1, help="số luồng song song (1 = tuần tự)")
     ap.add_argument("--out", type=str, default="batch_results.csv")
+    ap.add_argument("--keep_logs", action="store_true", help="Lưu stdout/stderr vào CSV")
     args = ap.parse_args()
 
     datasets = expand_data_glob(args.data_glob)
 
-    # header CSV
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames_base = [
-        "dataset","solver","seed","cmd","ok","return_total_cost","elapsed_wall",
+
+    base_fields = [
+        "dataset","solver","seed","cmd","ok","return_total_cost","elapsed_wall","returncode"
     ]
-    # sẽ bung thêm các key trong details
     rows = []
 
     tasks = []
@@ -117,9 +121,22 @@ def main():
         for data in datasets:
             for solver in args.solvers:
                 for seed in args.seeds:
-                    cmd_args = build_cmd_args(data, solver, seed, args.time, args.plot, args.config)
+                    cmd_args = build_cmd_args(
+                        data=data,
+                        solver=solver,
+                        seed=seed,
+                        tlimit=args.time,
+                        plot=args.plot,
+                        config=args.config,
+                        annotate=args.annotate,
+                        plot_path=args.plot_path,
+                        evaluator=args.evaluator
+                    )
                     fut = ex.submit(run_once, cmd_args)
-                    fut._meta = {"dataset": data, "solver": solver, "seed": seed, "cmd": " ".join(cmd_args)}
+                    fut._meta = {
+                        "dataset": data, "solver": solver, "seed": seed,
+                        "cmd": " ".join(cmd_args)
+                    }
                     tasks.append(fut)
 
         for fut in as_completed(tasks):
@@ -133,19 +150,22 @@ def main():
                 "ok": res.get("ok", False),
                 "return_total_cost": res.get("total_cost"),
                 "elapsed_wall": res.get("elapsed_wall"),
+                "returncode": res.get("returncode"),
             }
             det = res.get("details", {})
-            # ghép chi tiết (distance, tw_penalty, ...)
             for k, v in det.items():
                 row[k] = v
-            # lưu stdout/stderr để dễ debug (tuỳ bạn muốn bỏ hay giữ)
-            row["stdout"] = res.get("stdout","")
-            row["stderr"] = res.get("stderr","")
-            rows.append(row)
-            print(f"[DONE] {meta['solver']} seed={meta['seed']} data={meta['dataset']} -> ok={row['ok']} cost={row['return_total_cost']}")
 
-    # thu thập tất cả keys để ghi CSV đầy đủ cột
-    all_fields = list(fieldnames_base)
+            if args.keep_logs:
+                row["stdout"] = res.get("stdout","")
+                row["stderr"] = res.get("stderr","")
+
+            rows.append(row)
+            print(f"[DONE] {meta['solver']} seed={meta['seed']} data={meta['dataset']} "
+                  f"-> ok={row['ok']} cost={row['return_total_cost']}")
+
+    # Thu thập cột
+    all_fields = list(base_fields)
     extra_keys = set(k for r in rows for k in r.keys() if k not in all_fields)
     all_fields += sorted(extra_keys)
 

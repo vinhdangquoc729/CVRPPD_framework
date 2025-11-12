@@ -1,6 +1,6 @@
 {
   "source": "Osaba_100_4.xml",
-  "created_at": "2025-11-11T03:27:17.559464Z",
+  "created_at": "2025-11-12T05:20:41.719551Z",
   "type": "single_depot_single_vehicle_with_time_windows",
   "time_window_units": "minutes_from_midnight",
   "tw_penalty_per_min": 10.0,
@@ -9,5 +9,5 @@
   "distance_units": "euclidean (coordinate units)",
   "n_depots": 1,
   "n_vehicles": 1,
-  "note": "Base mirrors original amounts; PD-only applies to expanded/synthetic sets."
+  "note": "Base mirrors original amounts; PD-paired applies to expanded/synthetic sets."
 }
