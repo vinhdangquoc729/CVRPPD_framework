@@ -16,7 +16,6 @@ class Head:
     - priority: hoán vị chỉ số xe (0..|V|-1) theo mức độ ưu tiên phân bổ route.
     - routes_per_vehicle: số route của từng xe (theo chỉ số xe).
     - nodes_per_route: số node (bao gồm depot đầu/cuối) của từng route trong core (tuần tự).
-      -> CHỈ là metadata; KHÔNG dùng để cắt khách khi decode.
     - orders_per_node: số order trên từng KH (flatten theo thứ tự các route trong core; depot không có order).
     """
     priority: List[int]
@@ -29,7 +28,7 @@ class Head:
 class EncodedSolution:
     head: Head
     core_routes: List[List[int]]       # mỗi route là dãy node: [depot, ...customers..., depot]
-    tail_orders: List[List[List[int]]] # tail_orders[r][i] = list order_id ở KH thứ i (bỏ depot)
+    tail_orders: List[List[List[int]]] # tail_orders[r][i] = list order_id ở khách thứ i (bỏ depot)
 
 
 def _pd_maps(P: Problem) -> Tuple[Dict[int, int], Dict[int, int]]:
@@ -174,9 +173,8 @@ def decode_to_solution(P: Problem, enc: EncodedSolution) -> Solution:
 
 def _sync_head_metadata(enc: EncodedSolution) -> None:
     """
-    Đồng bộ lại metadata trong Head từ core/tail:
       - nodes_per_route: len(seq)
-      - orders_per_node: flatten len(list order) tại mỗi KH
+      - orders_per_node: flatten len(list order) tại mỗi khách
     """
     enc.head.nodes_per_route = [len(seq) for seq in enc.core_routes]
     new_flat: List[int] = []
@@ -188,12 +186,11 @@ def _sync_head_metadata(enc: EncodedSolution) -> None:
 
 class GA_HCT_PD_Solver(Solver):
     """
-    GA–HCT an toàn cho VRP-PD (đúng format H–C–T, không bỏ khách khi decode):
-    - Init: gán KH -> depot gần nhất; NN (có đảo ngẫu nhiên nhẹ) và chia đều theo depot.
+    - Init: gán khách vào depot gần nhất; NN (có đảo ngẫu nhiên nhẹ) và chia đều theo depot.
     - Crossover: Best-Cost Route Crossover (cắt đoạn KH + tail[order IDs], chèn cheapest).
     - Mutation: đảo 1 đoạn KH trong 1 route (đồng bộ tail).
     - Repair: uniqueness (mỗi KH đúng 1 lần) + PD precedence; tùy chọn ép same-vehicle (mặc định True).
-    - Selection: tournament theo FITNESS power-law; elitism.
+    - Selection: tournament theo fitness power-law.
     """
 
     def __init__(self,
@@ -220,8 +217,6 @@ class GA_HCT_PD_Solver(Solver):
         # Nếu dataset yêu cầu same-vehicle -> chắc chắn True; vẫn giúp giảm stockout/precedence
         self.enforce_same_vehicle = True
 
-    # ---------- chi phí & fitness ----------
-
     def _cost(self, s: Solution) -> float:
         c, _ = evaluate_modified(self.problem, s, return_details=False)
         return c
@@ -235,8 +230,6 @@ class GA_HCT_PD_Solver(Solver):
         Amax = max(costs); Amin = min(costs); k = self.power_k
         if abs(Amax - Amin) < 1e-12: return [1.0] * len(costs)
         return [((Amax - Ai) ** k) - Amin for Ai in costs]
-
-    # ---------- dựng quần thể ban đầu ----------
 
     def _vehicles_by_depot(self) -> Dict[int, List[int]]:
         by_dep: Dict[int, List[int]] = {}
@@ -304,10 +297,61 @@ class GA_HCT_PD_Solver(Solver):
                 routes.append(Route(vehicle_id=v.id, seq=[v.depot_id, v.depot_id]))
         return Solution(routes=routes)
 
+    def _build_initial_solution_random(self) -> Solution:
+        """
+        - Lấy tất cả khách hàng, xáo trộn ngẫu nhiên.
+        - Chia cho một số xe (random) rồi tạo route: depot -> khách... -> depot.
+        - Mỗi xe còn lại có 1 route rỗng (depot, depot).
+        """
+        P, rng = self.problem, self.rng
+        routes: List[Route] = []
+
+        # Danh sách khách
+        customers = [i for i, nd in P.nodes.items() if not nd.is_depot]
+        rng.shuffle(customers)
+
+        vehicles = list(P.vehicles)
+
+        # Không có khách: tất cả xe đều route rỗng
+        if not customers:
+            for v in vehicles:
+                routes.append(Route(vehicle_id=v.id, seq=[v.depot_id, v.depot_id]))
+            return Solution(routes=routes)
+
+        nV = len(vehicles)
+        nC = len(customers)
+
+        num_used = min(nV, nC)
+        used_indices = rng.sample(list(range(nV)), k=num_used)
+
+        buckets = self._balanced_split(customers, num_used)
+
+        # Tạo route cho các xe được dùng
+        for vidx, bucket in zip(used_indices, buckets):
+            v = vehicles[vidx]
+            if not bucket:
+                # trường hợp hiếm khi bucket rỗng
+                routes.append(Route(vehicle_id=v.id, seq=[v.depot_id, v.depot_id]))
+            else:
+                # có thể shuffle lại một lần nữa cho random hơn
+                rng.shuffle(bucket)
+                seq = [v.depot_id] + bucket + [v.depot_id]
+                routes.append(Route(vehicle_id=v.id, seq=seq))
+
+        # Các xe không dùng -> route rỗng
+        used_set = set(used_indices)
+        for vidx, v in enumerate(vehicles):
+            if vidx not in used_set:
+                routes.append(Route(vehicle_id=v.id, seq=[v.depot_id, v.depot_id]))
+
+        return Solution(routes=routes)
+
+
     def _init_population(self) -> List[EncodedSolution]:
         pop: List[EncodedSolution] = []
         for _ in range(self.pop_size):
-            s = self._build_initial_solution_guided()
+            # s = self._build_initial_solution_guided()
+            s = self._build_initial_solution_random()
             enc = encode_from_solution(self.problem, s)
             # Repair trước khi vào quần thể để tránh cá thể bẩn
             self._repair_uniqueness(enc)
@@ -359,9 +403,6 @@ class GA_HCT_PD_Solver(Solver):
     def _insert_segment_best(self, enc: EncodedSolution,
                              seg_customers: List[int],
                              seg_tail_ids: List[List[int]]) -> None:
-        """
-        Cheapest insertion của (seg_customers, seg_tail_ids) vào 1 route bất kỳ (thử trên một tập con route).
-        """
         P = self.problem; rng = self.rng
         if not enc.core_routes or not seg_customers:
             return
@@ -389,15 +430,13 @@ class GA_HCT_PD_Solver(Solver):
         enc.tail_orders[ridx] = tail[:before] + copy.deepcopy(seg_tail_ids) + tail[before:]
         _sync_head_metadata(enc)
 
-    # ---------- repair uniqueness + PD ----------
-
     def _all_customers(self) -> List[int]:
         P = self.problem
         return [i for i, nd in P.nodes.items() if not nd.is_depot]
 
     def _repair_uniqueness(self, enc: EncodedSolution) -> None:
         """
-        Mỗi khách xuất hiện đúng 1 lần; đồng bộ tail; chèn khách thiếu (cheapest-insertion, tail mặc định []).
+        Sửa lỗi: mỗi khách đúng 1 lần trong toàn bộ core_routes.
         """
         P = self.problem
         universe = set(self._all_customers())
@@ -457,9 +496,9 @@ class GA_HCT_PD_Solver(Solver):
     def _repair_pd_constraints(self, enc: EncodedSolution) -> None:
         """
         Sửa vi phạm PD:
-          - Precedence (cùng route): nếu delivery đứng trước pickup -> hoán đổi vị trí 2 KH (đồng bộ tail).
-          - Same-vehicle (tuỳ chọn): nếu p & d khác route, chuyển delivery về route của pickup
-            và CHỈ chèn ở vị trí SAU pickup (cheapest-insertion bị ràng buộc).
+          - Nếu delivery đứng trước pickup -> hoán đổi vị trí 2 khách (đồng bộ tail).
+          - Nếu pickup delivery khác route, chuyển delivery về route của pickup
+            và chỉ chèn ở vị trí sau pickup (cheapest-insertion bị ràng buộc).
         """
         P = self.problem
         p2d, d2p = _pd_maps(P)
@@ -467,8 +506,6 @@ class GA_HCT_PD_Solver(Solver):
             _sync_head_metadata(enc)
             return
 
-        # --- Precedence fix (same-route) ---
-        # Lập mapping node -> (ridx, pos among customers)
         def build_loc() -> Dict[int, Tuple[int, int]]:
             loc: Dict[int, Tuple[int, int]] = {}
             for ridx, seq in enumerate(enc.core_routes):
@@ -498,7 +535,6 @@ class GA_HCT_PD_Solver(Solver):
             _sync_head_metadata(enc)
             return
 
-        # --- Same-vehicle: move d -> route(p), chèn chỉ sau pickup p ---
         for p, d in p2d.items():
             loc = build_loc()  # rebuild sau mỗi vòng
             if p not in loc or d not in loc:
@@ -558,8 +594,6 @@ class GA_HCT_PD_Solver(Solver):
 
         _sync_head_metadata(enc)
 
-    # ---------- mutation & crossover ----------
-
     def _mutation(self, enc: EncodedSolution) -> None:
         rng = self.rng
         if not enc.core_routes: return
@@ -572,7 +606,6 @@ class GA_HCT_PD_Solver(Solver):
         i_pos, j_pos = sorted(rng.sample(range(len(cust_idx)), 2))
         i, j = cust_idx[i_pos], cust_idx[j_pos]
 
-        # đảo khách & tail tương ứng
         route[i:j+1] = reversed(route[i:j+1])
         tail[i_pos:j_pos+1] = reversed(tail[i_pos:j_pos+1])
         _sync_head_metadata(enc)
@@ -607,24 +640,20 @@ class GA_HCT_PD_Solver(Solver):
             self._remove_customers(c1, seg2_cust)
             self._insert_segment_best(c1, seg2_cust, seg2_tail)
 
-        # Repair mạnh tay theo PD + sync head
         self._repair_uniqueness(c1); self._repair_pd_constraints(c1); _sync_head_metadata(c1)
         self._repair_uniqueness(c2); self._repair_pd_constraints(c2); _sync_head_metadata(c2)
         return c1, c2
 
-    # ---------- GA main loop ----------
-
     def _tournament(self, population: List[EncodedSolution], fitness: List[float]) -> EncodedSolution:
         rng = self.rng; k = self.tournament_k
         idxs = rng.sample(range(len(population)), min(k, len(population)))
-        best = max(idxs, key=lambda i: fitness[i])  # FITNESS lớn nhất thắng
+        best = max(idxs, key=lambda i: fitness[i]) 
         return copy.deepcopy(population[best])
 
     def solve(self, time_limit_sec: float = 60.0) -> Solution:
         rng = self.rng; t0 = time.time()
 
         pop = self._init_population()
-        # Repair & sync trước khi chấm
         for ind in pop:
             self._repair_uniqueness(ind)
             self._repair_pd_constraints(ind)
@@ -654,7 +683,6 @@ class GA_HCT_PD_Solver(Solver):
                 if rng.random() < self.p_mut: self._mutation(child1)
                 if rng.random() < self.p_mut and len(new_pop) + 1 < self.pop_size: self._mutation(child2)
 
-                # Repair & sync sau mutation/crossover
                 self._repair_uniqueness(child1); self._repair_pd_constraints(child1); _sync_head_metadata(child1)
                 self._repair_uniqueness(child2); self._repair_pd_constraints(child2); _sync_head_metadata(child2)
 
@@ -664,7 +692,6 @@ class GA_HCT_PD_Solver(Solver):
 
             pop = new_pop
 
-            # Repair & sync trước khi chấm
             for ind in pop:
                 self._repair_uniqueness(ind)
                 self._repair_pd_constraints(ind)
