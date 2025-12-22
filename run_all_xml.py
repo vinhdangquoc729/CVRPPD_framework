@@ -7,7 +7,6 @@ OUT_DIR = r"dataset"           # folder output gốc
 PYTHON  = "python"                        # hoặc đường dẫn python cụ thể
 
 COMMON_ARGS = [
-    "--expand-base",
     "--del-mult-from-original", "1.0",
     "--pd-target-ratio", "1.0",
     "--veh-per-depot-min", "3", "--veh-per-depot-max", "4",

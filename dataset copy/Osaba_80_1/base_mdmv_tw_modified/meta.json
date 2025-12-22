@@ -1,0 +1,22 @@
+{
+  "source": "Osaba_80_1.xml",
+  "created_at": "2025-11-12T05:20:47.351152Z",
+  "n_orders": 38,
+  "n_nodes": 80,
+  "n_customers": 76,
+  "n_depots": 4,
+  "n_vehicles": 15,
+  "type": "multi_depot_multi_vehicle_with_time_windows",
+  "time_window_units": "minutes_from_midnight",
+  "tw_penalty_per_min": 10.0,
+  "service_time_units": "minutes",
+  "travel_speed_units_per_min": 60.0,
+  "distance_units": "euclidean (coordinate units)",
+  "pd_paired": true,
+  "coords_from_original": true,
+  "original_total_delivery": 600.0,
+  "target_delivery_total": 600.0,
+  "target_pickup_total": 600.0,
+  "delivery_mult_from_original": 1.0,
+  "lock_both_totals": false
+}

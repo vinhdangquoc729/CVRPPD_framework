@@ -848,7 +848,7 @@ def process_one(xml_path: Path, out_root: Path, args):
     target_pickup_total = (target_delivery_total / ratio) if ratio > 0 else None
 
     # --- base_modified (schema unify only)
-    base_dir = this_out / "base_modified"
+    base_dir = this_out / "base"
     base_dir.mkdir(parents=True, exist_ok=True)
     base_nodes_std = _standardize_base_nodes(nodes_df)
     base_vehicles = _default_base_vehicle_df(var_cost=float(args.veh_var_cost))
@@ -856,7 +856,7 @@ def process_one(xml_path: Path, out_root: Path, args):
         "source": xml_path.name, "created_at": datetime.utcnow().isoformat() + "Z",
         "type": "single_depot_single_vehicle_with_time_windows",
         "time_window_units": "minutes_from_midnight", "tw_penalty_per_min": float(args.tw_penalty_per_min),
-        "travel_speed_units_per_min": 60.0, "service_time_units": "minutes",
+        "travel_speed_units_per_min": 100.0, "service_time_units": "minutes",
         "distance_units": "euclidean (coordinate units)", "n_depots": 1, "n_vehicles": 1,
         "note": "Base mirrors original amounts; PD-paired applies to expanded/synthetic sets."
     }

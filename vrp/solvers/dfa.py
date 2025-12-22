@@ -1,329 +1,213 @@
 from __future__ import annotations
-import math, random
-from typing import List, Dict
+import math
+import random
+import time as _time
+from typing import List, Dict, Tuple, Any
+
 from .solver_base import Solver
 from ..core.problem import Problem
 from ..core.solution import Solution, Route
 from ..core.eval import evaluate
 
 class DFASolver(Solver):
-    def __init__(self, problem: Problem, seed: int = 42, pop_size: int = 50, gamma: float = 0.95):
+    def __init__(
+        self,
+        problem: Problem,
+        seed: int = 42,
+        pop_size: int = 50,
+        gamma: float = 0.95,
+    ):
         super().__init__(problem, seed)
         self.pop_size = pop_size
         self.gamma = gamma
-        random.seed(seed)
+        self.rng = random.Random(seed)
+        # Pre-cache depot ID để tránh truy cập thuộc tính object trong vòng lặp
+        self._veh2dep = {v.id: v.depot_id for v in self.problem.vehicles}
 
-    def _cluster_customers(self) -> Dict[int, list[int]]:
-        P = self.problem
-        clusters: Dict[int, list[int]] = {}
-        for i, nd in P.nodes.items():
-            if not nd.is_depot:
-                clusters.setdefault(nd.cluster, []).append(i)
-        return clusters
+    # =========================
+    # Helpers & Pre-processing
+    # =========================
 
-    def _vehicles_by_depot(self) -> Dict[int, list]:
+    def _vehicles_by_depot(self) -> Dict[int, List]:
         P = self.problem
-        by_dep: Dict[int, list] = {}
+        by_dep: Dict[int, List] = {}
         for v in P.vehicles:
             by_dep.setdefault(v.depot_id, []).append(v)
         return by_dep
 
-    def _nearest_depot(self, nid: int) -> int:
+    def _customers_by_nearest_depot(self) -> Dict[int, List[int]]:
         P = self.problem
-        return min(P.depots, key=lambda d: P.d(nid, d))
+        depots = P.depots
+        cust_by_dep: Dict[int, List[int]] = {d: [] for d in depots}
+        for nid, nd in P.nodes.items():
+            if nd.is_depot: continue
+            best_dep, best_dist = None, float("inf")
+            for d in depots:
+                dist = P.d(nid, d)
+                if dist < best_dist:
+                    best_dist, best_dep = dist, d
+            if best_dep is not None:
+                cust_by_dep[best_dep].append(nid)
+        return cust_by_dep
 
-    def _cluster_home_depot(self, cid: int, members: list[int]) -> int:
-        """Gán cụm về depot gần cụm nhất."""
-        P = self.problem
-        xs = [P.nodes[i].x for i in members]
-        ys = [P.nodes[i].y for i in members]
-        cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
-        best_d, best = None, float("inf")
-        for d in P.depots:
-            dx = P.nodes[d].x - cx
-            dy = P.nodes[d].y - cy
-            dist = (dx * dx + dy * dy) ** 0.5
-            if dist < best:
-                best, best_d = dist, d
-        return best_d  # type: ignore
+    def _get_flattened(self, sol: Solution) -> List[int]:
+        """Cache chuỗi khách hàng để tính Hamming nhanh hơn."""
+        nodes = self.problem.nodes
+        return [nid for rt in sol.routes for nid in rt.seq if not nodes[nid].is_depot]
 
-    def _shuffle_within_cluster(self, cluster_seq: list[int]) -> list[int]:
-        """
-        Xáo trộn nhẹ + optional đảo đoạn ngắn (shake).
-        """
-        if len(cluster_seq) <= 2:
-            return cluster_seq[:]
-        P = self.problem
-        order = [cluster_seq[0]]
-        remain = set(cluster_seq[1:])
-        while remain:
-            cur = order[-1]
-            nxt = min(remain, key=lambda j: P.d(cur, j))
-            order.append(nxt)
-            remain.remove(nxt)
-        if random.random() < 0.3:
-            i = random.randint(0, len(order) - 2)
-            j = random.randint(i + 1, len(order) - 1)
-            order[i:j] = reversed(order[i:j])
-        return order
+    # =========================
+    # Khởi tạo quần thể
+    # =========================
 
-    def _route_as_blocks(self, route: Route):
-        """Tách route thành danh sách block theo cụm: [(cluster_id, [customers...]), ...]."""
-        P = self.problem
-        blocks = []
-        cur_cid, cur_block = None, []
-        for k in route.seq:
-            if P.nodes[k].is_depot:
-                continue
-            cid = P.nodes[k].cluster
-            if cur_cid is None or cid != cur_cid:
-                if cur_block:
-                    blocks.append((cur_cid, cur_block))
-                cur_cid, cur_block = cid, [k]
-            else:
-                cur_block.append(k)
-        if cur_block:
-            blocks.append((cur_cid, cur_block))
-        return blocks
-
-    def _blocks_to_seq(self, depot_id: int, blocks) -> list[int]:
-        seq = [depot_id]
-        for _, block in blocks:
-            seq.extend(block)
-        seq.append(depot_id)
-        return seq
-
-    def _repair_cluster_integrity(self, sol: Solution) -> Solution:
-        """Đảm bảo mỗi cụm chỉ nằm trên một route."""
-        from collections import defaultdict
-        P = self.problem
-
-        # gom vị trí khách theo cụm và route
-        occur = defaultdict(lambda: defaultdict(list))  # cid -> route_idx -> [customers]
-        for r_idx, r in enumerate(sol.routes):
-            for i in r.seq:
-                if not P.nodes[i].is_depot:
-                    occur[P.nodes[i].cluster][r_idx].append(i)
-
-        # với mỗi cụm, giữ route có nhiều khách nhất; move phần còn lại sang đó
-        for cid, by_route in occur.items():
-            if len(by_route) <= 1:
-                continue
-            target = max(by_route.items(), key=lambda kv: len(kv[1]))[0]
-
-            # xoá các khách khỏi mọi route khác
-            to_move = []
-            for r_idx, custs in by_route.items():
-                if r_idx == target:
-                    continue
-                r = sol.routes[r_idx]
-                r.seq = [x for x in r.seq if (P.nodes[x].is_depot or P.nodes[x].cluster != cid)]
-                to_move.extend(custs)
-
-            # chèn vào route đích thành một block cuối
-            r_t = sol.routes[target]
-            blocks = self._route_as_blocks(r_t)
-            to_move = self._shuffle_within_cluster(to_move)
-            blocks.append((cid, to_move))
-            dep_t = next(v.depot_id for v in P.vehicles if v.id == r_t.vehicle_id)
-            r_t.seq = self._blocks_to_seq(dep_t, blocks)
-
-        # chuẩn hoá depot đầu/cuối
-        for r in sol.routes:
-            dep = next(v.depot_id for v in P.vehicles if v.id == r.vehicle_id)
-            body = [x for x in r.seq if not self.problem.nodes[x].is_depot]
-            r.seq = [dep] + body + [dep]
-        return sol
-
-    def _init_population(self) -> List[Solution]:
-        """
-        - Gom khách theo cụm.
-        - Gán cụm về depot nhà (trọng tâm cụm gần depot).
-        - Với mỗi depot: xáo trộn block cụm và chia round-robin theo đội xe.
-        """
-        P = self.problem
-        clusters = self._cluster_customers()
+    def _init_population_data(self) -> List[Dict[str, Any]]:
+        P, r = self.problem, self.rng
         veh_by_dep = self._vehicles_by_depot()
+        cust_by_dep = self._customers_by_nearest_depot()
+        pop_data = []
 
-        # gán mỗi cụm về 1 depot (home)
-        cluster_home: Dict[int, int] = {}
-        for cid, members in clusters.items():
-            cluster_home[cid] = self._cluster_home_depot(cid, members)
-
-        # nhóm cụm theo depot
-        clusters_by_depot: Dict[int, list[int]] = {}
-        for cid, dep in cluster_home.items():
-            clusters_by_depot.setdefault(dep, []).append(cid)
-
-        pop: List[Solution] = []
         for _ in range(self.pop_size):
             routes: List[Route] = []
-
             for dep, vehs in veh_by_dep.items():
-                if not vehs:
-                    continue
-                random.shuffle(vehs)
+                customers = cust_by_dep.get(dep, [])[:]
+                if not customers or not vehs: continue
+                r.shuffle(customers)
 
-                cids = clusters_by_depot.get(dep, [])[:]
-                random.shuffle(cids)
+                buckets = [[] for _ in range(len(vehs))]
+                for i, c in enumerate(customers):
+                    buckets[i % len(vehs)].append(c)
 
-                # tạo block per cluster (xáo trộn nội bộ cụm)
-                blocks = []
-                for cid in cids:
-                    block = self._shuffle_within_cluster(clusters[cid][:])
-                    blocks.append((cid, block))
-
-                # round-robin phân block cho xe
-                rr = [[] for _ in range(len(vehs))]
-                for i, b in enumerate(blocks):
-                    rr[i % len(vehs)].append(b)
-
-                # build route.seq cho từng xe
                 for k, v in enumerate(vehs):
-                    seq = self._blocks_to_seq(v.depot_id, rr[k])
-                    routes.append(Route(vehicle_id=v.id, seq=seq))
-
+                    custs_of_veh = buckets[k]
+                    if not custs_of_veh:
+                        routes.append(Route(vehicle_id=v.id, seq=[dep, dep]))
+                        continue
+                    
+                    avg_len = r.randint(4, 8)
+                    for start in range(0, len(custs_of_veh), avg_len):
+                        segment = custs_of_veh[start : start + avg_len]
+                        routes.append(Route(vehicle_id=v.id, seq=[dep] + segment + [dep]))
+            
             sol = Solution(routes=routes)
-            pop.append(self._repair_cluster_integrity(sol))
-        return pop
+            cost, _ = evaluate(P, sol, return_details=False)
+            pop_data.append({'sol': sol, 'cost': cost, 'flat': self._get_flattened(sol)})
+        return pop_data
 
-    @staticmethod
-    def _hamming_by_cluster(P: Problem, a: Solution, b: Solution) -> int:
-        """Khoảng cách Hamming sau khi làm phẳng"""
-        def flatten(sol: Solution):
-            out = []
-            for r in sol.routes:
-                out.extend([i for i in r.seq if not P.nodes[i].is_depot])
-            return out
+    # =========================
+    # Phép toán Di chuyển (Tối ưu Shallow Copy)
+    # =========================
 
-        A, B = flatten(a), flatten(b)
-        L = min(len(A), len(B))
-        return sum(1 for i in range(L) if A[i] != B[i]) + abs(len(A) - len(B))
+    def _fast_insertion_move(self, sol: Solution) -> Solution:
+        r = self.rng
+        if not sol.routes: return sol
+        active_indices = [idx for idx, rt in enumerate(sol.routes) if len(rt.seq) > 2]
+        if not active_indices: return sol
 
-    def _insertion_move(self, sol: Solution) -> Solution:
-        import copy
-        s = copy.deepcopy(sol)
-        P = self.problem
-
-        # chọn route nguồn có ít nhất 1 block
-        routes = [r for r in s.routes if len(self._route_as_blocks(r)) > 0]
-        if not routes:
-            return s
-        r_src = random.choice(routes)
-        blocks_src = self._route_as_blocks(r_src)
-        if not blocks_src:
-            return s
-
-        # intra-block shuffle
-        if random.random() < 0.5:
-            b_idx = random.randrange(len(blocks_src))
-            cid, block = blocks_src[b_idx]
-            blocks_src[b_idx] = (cid, self._shuffle_within_cluster(block))
-            dep_src = next(v.depot_id for v in P.vehicles if v.id == r_src.vehicle_id)
-            r_src.seq = self._blocks_to_seq(dep_src, blocks_src)
-            return self._repair_cluster_integrity(s)
-
-        # relocate/swap block giữa các route cùng depot
-        dep_src = next(v.depot_id for v in P.vehicles if v.id == r_src.vehicle_id)
-        same_dep_routes = [r for r in s.routes
-                           if next(v.depot_id for v in P.vehicles if v.id == r.vehicle_id) == dep_src]
-        if not same_dep_routes:
-            return s
-
-        r_dst = random.choice(same_dep_routes)
-        blocks_dst = self._route_as_blocks(r_dst)
-
-        # lấy 1 block ở src
-        b_idx = random.randrange(len(blocks_src))
-        cid, block = blocks_src.pop(b_idx)
-
-        if r_dst is r_src:
-            # di chuyển vị trí block trong cùng route
-            insert_pos = random.randrange(len(blocks_src) + 1)
-            blocks_src.insert(insert_pos, (cid, block))
-            r_src.seq = self._blocks_to_seq(dep_src, blocks_src)
+        new_routes = list(sol.routes)
+        if r.random() < 0.5:
+            idx = r.choice(active_indices)
+            old_rt = sol.routes[idx]
+            if len(old_rt.seq) <= 3: return sol
+            new_seq = list(old_rt.seq)
+            i, j = r.sample(range(1, len(new_seq) - 1), 2)
+            node = new_seq.pop(i)
+            new_seq.insert(j, node)
+            new_routes[idx] = Route(vehicle_id=old_rt.vehicle_id, seq=new_seq)
         else:
-            # chèn vào route đích ở vị trí bất kỳ
-            insert_pos = random.randrange(len(blocks_dst) + 1)
-            blocks_dst.insert(insert_pos, (cid, block))
-            r_src.seq = self._blocks_to_seq(dep_src, blocks_src)
-            dep_dst = next(v.depot_id for v in P.vehicles if v.id == r_dst.vehicle_id)
-            r_dst.seq = self._blocks_to_seq(dep_dst, blocks_dst)
+            idx_src = r.choice(active_indices)
+            rt_src = sol.routes[idx_src]
+            dep_id = self._veh2dep[rt_src.vehicle_id]
+            same_dep_indices = [idx for idx, rt in enumerate(sol.routes) 
+                               if self._veh2dep[rt.vehicle_id] == dep_id and idx != idx_src]
+            if not same_dep_indices: return sol
+            idx_dst = r.choice(same_dep_indices)
+            rt_dst = sol.routes[idx_dst]
+            new_seq_src, new_seq_dst = list(rt_src.seq), list(rt_dst.seq)
+            node = new_seq_src.pop(r.randint(1, len(new_seq_src) - 2))
+            new_seq_dst.insert(r.randint(1, max(1, len(new_seq_dst) - 1)), node)
+            new_routes[idx_src] = Route(vehicle_id=rt_src.vehicle_id, seq=new_seq_src)
+            new_routes[idx_dst] = Route(vehicle_id=rt_dst.vehicle_id, seq=new_seq_dst)
+        return Solution(routes=new_routes)
 
-        return self._repair_cluster_integrity(s)
+    # =========================
+    # Giải thuật Discrete Firefly (Tối ưu Jumps)
+    # =========================
 
     def solve(
         self,
         time_limit_sec: float = 10000.0,
-        patience_iters: int = 25,
-        max_generations: int | None = 10000, 
+        patience_iters: int = 50,
+        max_generations: int | None = 500,
     ) -> Solution:
-        import time as _time
         P = self.problem
-        pop = self._init_population()
+        pop_data = self._init_population_data()
+        pop_data.sort(key=lambda x: x['cost'])
+        best_entry = pop_data[0]
 
-        # Cache chi phí để tránh tính lại nhiều lần
-        cost_cache: Dict[tuple, float] = {}
+        gen, no_improve, t0 = 0, 0, _time.time()
         
-        def key_of(s: Solution):
-            return tuple(tuple(r.seq) for r in s.routes)
-        
-        def cost_of(s: Solution) -> float:
-            key = key_of(s)
-            c = cost_cache.get(key)
-            if c is None:
-                c, _ = evaluate(P, s, return_details=False)
-                cost_cache[key] = c
-            return c
+        # Giới hạn số "hướng nhảy" tối đa mỗi cá thể quan sát
+        MAX_JUMPS_PER_ENTITY = 5 
 
-        # chi phí càng thấp, độ sáng càng cao
-        pop.sort(key=lambda s: -cost_of(s))
-        best = pop[0]
-        best_cost = cost_of(best)
-
-        gen = 0
-        no_improve = 0
-        t0 = _time.time()
-
-        # vòng lặp chính
         while (_time.time() - t0) < time_limit_sec and (max_generations is None or gen < max_generations):
-            new_pop: List[Solution] = []
-            for i in range(len(pop)):
-                xi = pop[i]
-                ci = cost_of(xi)
+            # Luôn so sánh với các cá thể tốt hơn (targets)
+            new_pop_data = []
 
-                # bay về các cá thể sáng hơn
-                for j in range(len(pop)):
-                    if j == i:
-                        continue
-                    xj = pop[j]
-                    if -cost_of(xj) > -ci:
-                        rij = self._hamming_by_cluster(P, xi, xj)
-                        step_max = max(2, int(rij * (self.gamma ** gen)))   # <-- dùng gen
-                        trials: List[Solution] = []
-                        for _ in range(max(2, step_max)):
-                            cand = self._insertion_move(xi)
-                            trials.append(cand)
-                        xi = min(trials, key=cost_of)
-                        ci = cost_of(xi)
+            for i in range(len(pop_data)):
+                xi_entry = pop_data[i]
+                success_jumps = 0
+                
+                # Duyệt qua các cá thể sáng hơn xj (index j < i)
+                for j in range(i):
+                    target = pop_data[j]
+                    
+                    if target['cost'] < xi_entry['cost']:
+                        # Tính rij nhanh bằng flat cache
+                        A, B = xi_entry['flat'], target['flat']
+                        L = min(len(A), len(B))
+                        rij = sum(1 for k in range(L) if A[k] != B[k]) + abs(len(A) - len(B))
+                        
+                        # Thử cải thiện xi theo hướng target
+                        step_max = max(1, int(rij * (self.gamma ** gen) * 0.1))
+                        improved_this_direction = False
+                        
+                        for _ in range(step_max):
+                            cand_sol = self._fast_insertion_move(xi_entry['sol'])
+                            c_val, _ = evaluate(P, cand_sol, return_details=False)
+                            
+                            if c_val < xi_entry['cost']:
+                                xi_entry = {
+                                    'sol': cand_sol,
+                                    'cost': c_val,
+                                    'flat': self._get_flattened(cand_sol)
+                                }
+                                improved_this_direction = True
+                                break # Early exit cho step_max
+                        
+                        if improved_this_direction:
+                            success_jumps += 1
+                            if success_jumps >= MAX_JUMPS_PER_ENTITY:
+                                break # Đạt giới hạn 5 hướng nhảy thành công
+                
+                # Nếu không có hướng nhảy nào tốt (hoặc là con tốt nhất), thử đột biến nhẹ
+                if success_jumps == 0:
+                    mutated = self._fast_insertion_move(xi_entry['sol'])
+                    m_cost, _ = evaluate(P, mutated, return_details=False)
+                    if m_cost < xi_entry['cost']:
+                        xi_entry = {'sol': mutated, 'cost': m_cost, 'flat': self._get_flattened(mutated)}
 
-                new_pop.append(xi)
+                new_pop_data.append(xi_entry)
 
-            # chọn top pop_size
-            pop = sorted(new_pop, key=cost_of)[:self.pop_size]
+            # Sắp xếp và chọn lọc thế hệ mới
+            new_pop_data.sort(key=lambda x: x['cost'])
+            pop_data = new_pop_data[:self.pop_size]
 
-            # cập nhật best
-            cur_cost = cost_of(pop[0])
-            if cur_cost < best_cost:
-                best = pop[0]
-                best_cost = cur_cost
-                no_improve = 0
+            if pop_data[0]['cost'] < best_entry['cost']:
+                best_entry, no_improve = pop_data[0], 0
             else:
                 no_improve += 1
 
             gen += 1
+            print(f"Gen {gen} | Best: {best_entry['cost']:.2f} | Jumps/Ent: {MAX_JUMPS_PER_ENTITY}", end='\r')
+            if patience_iters and no_improve >= patience_iters: break
 
-            if patience_iters and no_improve >= patience_iters:
-                break
-
-        return best
+        return best_entry['sol']

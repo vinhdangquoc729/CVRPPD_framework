@@ -10,8 +10,9 @@ RUN_ONE: List[str] = [sys.executable, "-m", "vrp.experiments.run_experiment"]  #
 SOLVER_CHOICES = [
     "dfa", "esa",
     "dfa_pd", "esa_pd",
-    "ga_hct_pd",
+    "ga_hct_pd", "ga_pd_hct",
     "cluster_ga", "cluster_ga_pd",
+    "ga_ombuki",
 ]
 
 def build_cmd_args(
@@ -56,6 +57,8 @@ def run_once(cmd_args: List[str], cwd: Optional[str]=None) -> dict:
         line = line.strip()
         if line.startswith("solver:"):
             res["solver"] = line.split("solver:", 1)[1].strip()
+        elif line.startswith("solution:"):
+            res["solution"] = line.split("solution:", 1)[1].strip()
         elif line.startswith("seed:"):
             try:
                 res["seed"] = int(line.split("seed:", 1)[1].strip())
@@ -151,6 +154,7 @@ def main():
                 "return_total_cost": res.get("total_cost"),
                 "elapsed_wall": res.get("elapsed_wall"),
                 "returncode": res.get("returncode"),
+                "solution": res.get("solution")
             }
             det = res.get("details", {})
             for k, v in det.items():

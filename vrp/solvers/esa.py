@@ -6,13 +6,15 @@ from ..core.problem import Problem
 from ..core.solution import Solution, Route
 from ..core.eval import evaluate
 
+
 class ESASolver(Solver):
     def __init__(self, problem: Problem, seed: int = 42,
-                 mu: int = 20,                    # cỡ quần thể
+                 mu: int = 20,                 # cỡ quần thể
                  elite_frac: float = 0.3,         # giữ elite
                  alpha: float = 0.95,             # cooling rate
                  trials_per_iter: int = 8,        # số láng giềng cho mỗi cá thể/iter
-                 patience_iters: int = 50,        # early stop nếu không cải thiện
+                 patience_iters: int = 25,        # early stop nếu không cải thiện
+                 max_generation: int = 500,       # THÊM: giới hạn số thế hệ tối đa
                  ):
         super().__init__(problem, seed)
         self.rng = random.Random(seed)
@@ -21,15 +23,9 @@ class ESASolver(Solver):
         self.alpha = alpha
         self.trials_per_iter = trials_per_iter
         self.patience_iters = patience_iters
+        self.max_generation = max_generation # Lưu tham số max_generation
 
-    # các helper
-    def _cluster_customers(self) -> Dict[int, List[int]]:
-        P = self.problem
-        clusters = {}
-        for i, nd in P.nodes.items():
-            if not nd.is_depot:
-                clusters.setdefault(nd.cluster, []).append(i)
-        return clusters
+    # ... [Các hàm _vehicles_by_depot, _customers_by_nearest_depot, _init_population giữ nguyên] ...
 
     def _vehicles_by_depot(self) -> Dict[int, List]:
         by_dep: Dict[int, List] = {}
@@ -37,99 +33,55 @@ class ESASolver(Solver):
             by_dep.setdefault(v.depot_id, []).append(v)
         return by_dep
 
-    def _cluster_home_depot(self, members: List[int]) -> int:
+    def _customers_by_nearest_depot(self) -> Dict[int, List[int]]:
         P = self.problem
-        xs = [P.nodes[i].x for i in members]; ys = [P.nodes[i].y for i in members]
-        cx, cy = sum(xs)/len(xs), sum(ys)/len(ys)
-        best_d, best = None, 1e18
-        for d in P.depots:
-            dx = P.nodes[d].x - cx; dy = P.nodes[d].y - cy
-            dist2 = dx*dx + dy*dy
-            if dist2 < best: best, best_d = dist2, d
-        return best_d
-
-    def _route_as_blocks(self, route: Route):
-        P = self.problem
-        blocks = []
-        cur_cid, cur_block = None, []
-        for k in route.seq:
-            if P.nodes[k].is_depot:
+        depot_ids = list({v.depot_id for v in P.vehicles})
+        cust_by_dep: Dict[int, List[int]] = {d: [] for d in depot_ids}
+        for nid, nd in P.nodes.items():
+            if nd.is_depot:
                 continue
-            cid = P.nodes[k].cluster
-            if cur_cid is None or cid != cur_cid:
-                if cur_block:
-                    blocks.append((cur_cid, cur_block))
-                cur_cid, cur_block = cid, [k]
-            else:
-                cur_block.append(k)
-        if cur_block:
-            blocks.append((cur_cid, cur_block))
-        return blocks
-
-    def _blocks_to_seq(self, depot_id: int, blocks) -> List[int]:
-        seq = [depot_id]
-        for _, block in blocks:
-            seq.extend(block)
-        seq.append(depot_id)
-        return seq
-
-    def _shuffle_within_cluster(self, block: List[int]) -> List[int]:
-        P = self.problem
-        r = self.rng
-        if len(block) <= 2:
-            out = block[:]
-            r.shuffle(out)
-            return out
-        order = [block[0]]
-        remain = set(block[1:])
-        while remain:
-            cur = order[-1]
-            nxt = min(remain, key=lambda j: P.d(cur, j))
-            order.append(nxt); remain.remove(nxt)
-        if r.random() < 0.5:
-            i = r.randint(0, len(order)-2)
-            j = r.randint(i+1, len(order)-1)
-            order[i:j] = reversed(order[i:j])
-        return order
-
-    # Khởi tạo quần thể
+            best_dep = None
+            best_dist = float("inf")
+            for d in depot_ids:
+                dist = P.d(nid, d)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_dep = d
+            if best_dep is not None:
+                cust_by_dep[best_dep].append(nid)
+        return cust_by_dep
+    
     def _init_population(self) -> List[Solution]:
         P = self.problem
         r = self.rng
-        clusters = self._cluster_customers()
         veh_by_dep = self._vehicles_by_depot()
-
-        # gán mỗi cụm về depot
-        cluster_home = {cid: self._cluster_home_depot(members) for cid, members in clusters.items()}
-
-        # nhóm cụm theo depot
-        clusters_by_depot = {}
-        for cid, dep in cluster_home.items():
-            clusters_by_depot.setdefault(dep, []).append(cid)
-
+        cust_by_dep = self._customers_by_nearest_depot()
         pop: List[Solution] = []
         for _ in range(self.mu):
             routes: List[Route] = []
             for dep, vehs in veh_by_dep.items():
-                cids = clusters_by_depot.get(dep, [])[:]
-                r.shuffle(cids)
-                blocks = []
-                for cid in cids:
-                    custs = clusters[cid][:]
-                    r.shuffle(custs)
-                    blocks.append((cid, custs))
-                if not vehs:
+                customers = cust_by_dep.get(dep, [])[:]
+                if not customers or not vehs:
+                    for v in vehs:
+                        routes.append(Route(vehicle_id=v.id, seq=[dep, dep]))
                     continue
-
-                buckets = [[] for _ in range(len(vehs))]
-                for i, b in enumerate(blocks):
-                    buckets[i % len(vehs)].append(b)
-
+                r.shuffle(customers)
+                buckets: List[List[int]] = [[] for _ in range(len(vehs))]
+                for i, c in enumerate(customers):
+                    buckets[i % len(vehs)].append(c)
                 for k, v in enumerate(vehs):
-                    if not buckets[k]:
+                    custs_of_veh = buckets[k]
+                    routes.append(Route(vehicle_id=v.id, seq=[dep, dep]))
+                    if not custs_of_veh:
                         continue
-                    seq = self._blocks_to_seq(v.depot_id, buckets[k])
-                    routes.append(Route(vehicle_id=v.id, seq=seq))
+                    avg_len = r.randint(4, 8)
+                    start = 0
+                    while start < len(custs_of_veh):
+                        end = min(len(custs_of_veh), start + avg_len)
+                        segment = custs_of_veh[start:end]
+                        seq = [dep] + segment + [dep]
+                        routes.append(Route(vehicle_id=v.id, seq=seq))
+                        start = end
             pop.append(Solution(routes=routes))
         return pop
 
@@ -138,48 +90,83 @@ class ESASolver(Solver):
         P = self.problem
         r = self.rng
         s = copy.deepcopy(sol)
-
-        # chọn route có block
-        routes = [rt for rt in s.routes if len(self._route_as_blocks(rt)) > 0]
-        if not routes:
+        if not s.routes:
             return s
-        r_src = r.choice(routes)
-        dep_src = next(v.depot_id for v in P.vehicles if v.id == r_src.vehicle_id)
-        blocks_src = self._route_as_blocks(r_src)
-
-        # shuffle trong block
+        veh2dep = {v.id: v.depot_id for v in P.vehicles}
+        routes_with_cust = [rt for rt in s.routes if len(rt.seq) > 2]
+        if not routes_with_cust:
+            return s
         if r.random() < 0.5:
-            b_idx = r.randrange(len(blocks_src))
-            cid, block = blocks_src[b_idx]
-            blocks_src[b_idx] = (cid, self._shuffle_within_cluster(block))
-            r_src.seq = self._blocks_to_seq(dep_src, blocks_src)
+            rt = r.choice(routes_with_cust)
+            depot_id = veh2dep[rt.vehicle_id]
+            inner_idx = list(range(1, len(rt.seq) - 1))
+            if len(inner_idx) < 2:
+                return s
+            i, j = r.sample(inner_idx, 2)
+            node = rt.seq.pop(i)
+            if j >= len(rt.seq): 
+                j = len(rt.seq) - 1
+            rt.seq.insert(j, node)
+            if rt.seq[0] != depot_id: 
+                rt.seq = [depot_id] + [n for n in rt.seq if n != depot_id]
+            if rt.seq[-1] != depot_id: 
+                rt.seq = [n for n in rt.seq if n != depot_id] + [depot_id]
             return s
-
-        # relocate/swap giữa routes cùng depot
-        same_dep_routes = [rt for rt in s.routes
-                           if next(v.depot_id for v in P.vehicles if v.id == rt.vehicle_id) == dep_src]
-        r_dst = r.choice(same_dep_routes)
-        blocks_dst = self._route_as_blocks(r_dst)
-
-        # pop 1 block
-        b_idx = r.randrange(len(blocks_src))
-        cid, block = blocks_src.pop(b_idx)
-
-        if r_dst is r_src:
-            # di chuyển vị trí block trong cùng route
-            insert_pos = r.randrange(len(blocks_src)+1)
-            blocks_src.insert(insert_pos, (cid, block))
-            r_src.seq = self._blocks_to_seq(dep_src, blocks_src)
-        else:
-            # chèn sang route đích
-            insert_pos = r.randrange(len(blocks_dst)+1)
-            blocks_dst.insert(insert_pos, (cid, block))
-            r_src.seq = self._blocks_to_seq(dep_src, blocks_src)
-            dep_dst = next(v.depot_id for v in P.vehicles if v.id == r_dst.vehicle_id)
-            r_dst.seq = self._blocks_to_seq(dep_dst, blocks_dst)
-
+        rt_src = r.choice(routes_with_cust)
+        dep_src = veh2dep[rt_src.vehicle_id]
+        candidates = [rt for rt in s.routes if veh2dep[rt.vehicle_id] == dep_src]
+        if len(candidates) < 2:
+            return self._neighbor_intra_only(s)
+        rt_dst = r.choice(candidates)
+        while rt_dst is rt_src:
+            rt_dst = r.choice(candidates)
+        src_inner_idx = list(range(1, len(rt_src.seq) - 1))
+        if not src_inner_idx:
+            return s
+        i = r.choice(src_inner_idx)
+        node = rt_src.seq.pop(i)
+        dst_inner_pos = list(range(1, len(rt_dst.seq)))
+        j = r.choice(dst_inner_pos)
+        rt_dst.seq.insert(j, node)
+        dep_dst = veh2dep[rt_dst.vehicle_id]
+        if rt_src.seq[0] != dep_src:
+            rt_src.seq = [dep_src] + [n for n in rt_src.seq if n != dep_src]
+        if rt_src.seq[-1] != dep_src:
+            rt_src.seq = [n for n in rt_src.seq if n != dep_src] + [dep_src]
+        if rt_dst.seq[0] != dep_dst:
+            rt_dst.seq = [dep_dst] + [n for n in rt_dst.seq if n != dep_dst]
+        if rt_dst.seq[-1] != dep_dst:
+            rt_dst.seq = [n for n in rt_dst.seq if n != dep_dst] + [dep_dst]
         return s
 
+    def _neighbor_intra_only(self, sol: Solution) -> Solution:
+        import copy
+        P = self.problem
+        r = self.rng
+        s = copy.deepcopy(sol)
+        veh2dep = {v.id: v.depot_id for v in P.vehicles}
+        routes_with_cust = [rt for rt in s.routes if len(rt.seq) > 2]
+        if not routes_with_cust:
+            return s
+        rt = r.choice(routes_with_cust)
+        depot_id = veh2dep[rt.vehicle_id]
+        inner_idx = list(range(1, len(rt.seq) - 1))
+        if len(inner_idx) < 2:
+            return s
+        i, j = r.sample(inner_idx, 2)
+        node = rt.seq.pop(i)
+        if j >= len(rt.seq):
+            j = len(rt.seq) - 1
+        rt.seq.insert(j, node)
+        if rt.seq[0] != depot_id:
+            rt.seq = [depot_id] + [n for n in rt.seq if n != depot_id]
+        if rt.seq[-1] != depot_id:
+            rt.seq = [n for n in rt.seq if n != depot_id] + [depot_id]
+        return s
+
+    # =========================
+    # Hàm solve với max_generation
+    # =========================
     def solve(self, time_limit_sec: float = 30.0) -> Solution:
         P = self.problem
         r = self.rng
@@ -187,10 +174,11 @@ class ESASolver(Solver):
 
         pop = self._init_population()
 
-        # cache chi phí
         cost_cache: Dict[Tuple[Tuple[int, ...], ...], float] = {}
+
         def key_of(s: Solution):
             return tuple(tuple(rt.seq) for rt in s.routes)
+
         def cost_of(s: Solution) -> float:
             k = key_of(s)
             v = cost_cache.get(k)
@@ -200,9 +188,9 @@ class ESASolver(Solver):
             return v
 
         pop.sort(key=cost_of)
-        best = pop[0]; best_cost = cost_of(best)
+        best = pop[0]
+        best_cost = cost_of(best)
 
-        # đặt nhiệt độ
         costs0 = [cost_of(s) for s in pop]
         spread = max(costs0) - min(costs0) if len(costs0) > 1 else max(1.0, abs(costs0[0]))
         T = spread / max(1.0, math.log(1 / 0.95))
@@ -210,25 +198,23 @@ class ESASolver(Solver):
         patience = 0
         it = 0
 
-        while time.time() - t0 < time_limit_sec:
+        # SỬA: Thêm điều kiện it < self.max_generation
+        while (time.time() - t0 < time_limit_sec) and (it < self.max_generation):
             it += 1
+            print(f"Iteration {it}: best_cost = {best_cost}", end="\r")
             new_pop: List[Solution] = []
 
-            # elitism
             elite_k = max(1, int(self.elite_frac * self.mu))
             elites = pop[:elite_k]
             new_pop.extend(elites)
 
-            # sinh ứng viên từ tournament nhỏ
             while len(new_pop) < self.mu:
-                # chọn bố mẹ
                 if len(pop) >= 2:
                     a, b = r.sample(pop, 2)
                     parent = a if cost_of(a) <= cost_of(b) else b
                 else:
                     parent = pop[0]
                 child = parent
-                # nhiều bước láng giềng
                 for _ in range(self.trials_per_iter):
                     cand = self._neighbor(child)
                     dE = cost_of(cand) - cost_of(child)
@@ -237,7 +223,8 @@ class ESASolver(Solver):
                 new_pop.append(child)
 
             pop = sorted(new_pop, key=cost_of)
-            cur_best = pop[0]; cur_cost = cost_of(cur_best)
+            cur_best = pop[0]
+            cur_cost = cost_of(cur_best)
 
             if cur_cost < best_cost:
                 best, best_cost = cur_best, cur_cost
@@ -247,7 +234,6 @@ class ESASolver(Solver):
                 if patience >= self.patience_iters:
                     break
 
-            # làm nguội
             T *= self.alpha
             if T < 1e-6:
                 T = 1e-6

@@ -33,7 +33,6 @@ class ProgressLog:
         self.costs.append(cost)
         self.solutions.append(sol)
 
-# ---------- DFASolver có logging (kế thừa từ bản hiện có) ----------
 class LoggedDFASolver(_DFASolver):
     def solve(self,
               time_limit_sec: float = 30.0,
@@ -44,7 +43,6 @@ class LoggedDFASolver(_DFASolver):
         P = self.problem
         pop = self._init_population()
 
-        # --- cache cost để tránh evaluate trùng ---
         cost_cache = {}
         def cost_of(s: Solution) -> float:
             key = tuple(tuple(r.seq) for r in s.routes)
@@ -54,8 +52,7 @@ class LoggedDFASolver(_DFASolver):
                 cost_cache[key] = c
             return c
 
-        # khởi tạo
-        pop.sort(key=lambda s: -cost_of(s))   # brightness = -cost
+        pop.sort(key=lambda s: -cost_of(s))
         best = pop[0]
         best_cost = cost_of(best)
 
@@ -64,7 +61,6 @@ class LoggedDFASolver(_DFASolver):
         EPS = 1e-9
         t0 = _time.time()
 
-        # log ban đầu
         if on_progress is not None:
             on_progress(0, 0.0, best_cost, best)
 
@@ -91,10 +87,8 @@ class LoggedDFASolver(_DFASolver):
 
                 new_pop.append(xi)
 
-            # chọn top pop_size
             pop = sorted(new_pop, key=cost_of)[:self.pop_size]
 
-            # cập nhật best + patience
             cur_cost = cost_of(pop[0])
             if cur_cost + EPS < best_cost:
                 best = pop[0]
@@ -110,26 +104,22 @@ class LoggedDFASolver(_DFASolver):
                 elapsed = _time.time() - t0
                 on_progress(it, elapsed, best_cost, best)
 
-            # early stop theo kiên nhẫn
             if patience_iters is not None and patience_iters > 0 and no_improve >= patience_iters:
                 break
 
-            # dừng theo thời gian (phòng khi vòng lặp lâu)
             if (_time.time() - t0) >= time_limit_sec:
                 break
 
         return best
 
-# ---------- GA có logging (tuỳ chọn: nếu GA của bạn đã hỗ trợ callback thì dùng luôn) ----------
 class LoggedGASolver(_GASolver):
     def solve(self, time_limit_sec: float = 30.0,
               on_progress: Callable[[int, float, float, Solution], None] | None = None) -> Solution:
-        # Nếu GA của bạn có vòng lặp rõ, thêm hook tương tự như DFA ở trên.
-        # Tạm thời fallback về solve gốc và chỉ log final.
         sol = super().solve(time_limit_sec=time_limit_sec)
         if on_progress is not None:
             on_progress(0, 0.0, evaluate(self.problem, sol, False)[0], sol)
         return sol
+        
 class LoggedDFAPDSolver(DFASolverPD):
     """
     DFASolverPD có ghi log tiến trình qua callback on_progress(iter, elapsed, best_cost, best_solution).

@@ -203,41 +203,80 @@ class ClusterGASolver(Solver):
 
     def _decode(self, chrom: Chromosome) -> Solution:
         """
-        Gom các cụm theo xe được gán, sắp xếp thứ tự cụm theo:
-          - cluster_order (nếu use_gene_inter_order = True), hoặc
-          - heuristic hàng xóm gần nhất theo cụm (NN).
-        Sau đó ghép chuỗi khách trong từng cụm theo intra_orders.
+        Giải mã nhiễm sắc thể thành Solution hỗ trợ Multi-trip (Journey).
+        Chiến thuật: Greedy Splitting (Tham lam ngắt chuyến).
+        - Duyệt các cụm được gán cho xe.
+        - Nếu cụm tiếp theo làm xe quá tải -> Về kho, lập chuyến mới.
         """
         P = self.problem
-
-        # nhóm chỉ số cụm theo xe
+        
+        # 1. Gom nhóm cụm theo xe
         clusters_by_vehicle: List[List[int]] = [[] for _ in self.vehicles]
         for c_idx, v_idx in enumerate(chrom.assignment):
-            v_idx = max(0, min(v_idx, len(self.vehicles) - 1))  # kẹp an toàn
+            # Clip v_idx để an toàn
+            v_idx = max(0, min(v_idx, len(self.vehicles) - 1))
             clusters_by_vehicle[v_idx].append(c_idx)
 
         routes: List[Route] = []
 
-        if self.use_gene_inter_order:
-            # sắp xếp cụm theo vị trí xuất hiện trong cluster_order
-            pos = {c: i for i, c in enumerate(chrom.cluster_order)}
-            for v_idx, veh in enumerate(self.vehicles):
-                depot_id = veh.depot_id
-                ordered_clusters = sorted(clusters_by_vehicle[v_idx], key=lambda c: pos[c])
-                seq: List[int] = [depot_id]
-                for c_idx in ordered_clusters:
-                    seq.extend(chrom.intra_orders[c_idx])
-                seq.append(depot_id)
-                routes.append(Route(vehicle_id=veh.id, seq=seq))
-        else:
-            # Heuristic nearest neighbor giữa cụm (tính khoảng cách từ đỉnh hiện tại tới *khách gần nhất* của cụm)
-            for v_idx, veh in enumerate(self.vehicles):
-                depot_id = veh.depot_id
-                ordered_clusters = self._order_clusters_nn(clusters_by_vehicle[v_idx], depot_id)
-                seq: List[int] = [depot_id]
-                for c_idx in ordered_clusters:
-                    seq.extend(chrom.intra_orders[c_idx])
-                seq.append(depot_id)
+        # 2. Xử lý từng xe
+        for v_idx, veh in enumerate(self.vehicles):
+            assigned_clusters = clusters_by_vehicle[v_idx]
+            if not assigned_clusters:
+                # Nếu xe không được gán gì, tạo route rỗng để giữ chỗ (nếu muốn)
+                # routes.append(Route(vehicle_id=veh.id, seq=[veh.depot_id, veh.depot_id]))
+                continue
+
+            # Sắp xếp thứ tự các cụm
+            if self.use_gene_inter_order:
+                # Dựa trên gene cluster_order
+                pos = {c: i for i, c in enumerate(chrom.cluster_order)}
+                ordered_clusters = sorted(assigned_clusters, key=lambda c: pos[c])
+            else:
+                # Dựa trên heuristic Nearest Neighbor
+                ordered_clusters = self._order_clusters_nn(assigned_clusters, veh.depot_id)
+
+            # --- LOGIC NGẮT CHUYẾN (SPLIT) ---
+            current_trip_nodes: List[int] = []
+            
+            # Theo dõi tải trọng để quyết định khi nào về kho
+            # (Heuristic đơn giản: tổng giao hoặc tổng nhận không vượt quá capacity)
+            current_load_delivery = 0
+            current_load_pickup = 0
+            capacity = veh.capacity
+            depot_id = veh.depot_id
+
+            for c_idx in ordered_clusters:
+                # Lấy danh sách khách trong cụm (theo thứ tự gene intra_orders)
+                cluster_nodes = chrom.intra_orders[c_idx]
+                
+                # Tính tổng nhu cầu của cụm này
+                c_del = sum(P.nodes[n].demand_delivery for n in cluster_nodes)
+                c_pick = sum(P.nodes[n].demand_pickup for n in cluster_nodes)
+
+                # Kiểm tra: Nếu thêm cụm này mà quá tải -> Ngắt chuyến cũ, tạo chuyến mới
+                # (Đây là check đơn giản, eval.py sẽ check kỹ hơn về simultaneous)
+                is_overload = (current_load_delivery + c_del > capacity) or \
+                              (current_load_pickup + c_pick > capacity)
+
+                if current_trip_nodes and is_overload:
+                    # 1. Đóng gói chuyến cũ: Depot -> Khách -> Depot
+                    seq = [depot_id] + current_trip_nodes + [depot_id]
+                    routes.append(Route(vehicle_id=veh.id, seq=seq))
+                    
+                    # 2. Reset cho chuyến mới
+                    current_trip_nodes = []
+                    current_load_delivery = 0
+                    current_load_pickup = 0
+
+                # Thêm cụm vào chuyến hiện tại (hoặc chuyến mới vừa reset)
+                current_trip_nodes.extend(cluster_nodes)
+                current_load_delivery += c_del
+                current_load_pickup += c_pick
+
+            # Đừng quên lưu chuyến cuối cùng còn dang dở
+            if current_trip_nodes:
+                seq = [depot_id] + current_trip_nodes + [depot_id]
                 routes.append(Route(vehicle_id=veh.id, seq=seq))
 
         return Solution(routes=routes)
@@ -437,5 +476,6 @@ class ClusterGASolver(Solver):
                 break
 
             gen += 1
+            print(f"Generation {gen}: best_cost = {best_cost}", end="\r")
 
         return self._decode(best)

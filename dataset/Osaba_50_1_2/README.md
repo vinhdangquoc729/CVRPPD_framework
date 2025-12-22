@@ -1,4 +1,4 @@
-# Osaba VRP — Normalized & Expanded for `Osaba_50_1_2.xml` (2025-11-12T05:20:42.902698Z)
+# Osaba VRP — Normalized & Expanded for `Osaba_50_1_2.xml` (2025-12-18T17:38:40.306569Z)
 
 - Base: giữ nguyên schema, không paired.
 - Expanded (base_mdmv_tw_modified): **paired PD**, KHÔNG sinh toạ độ mới (dùng toạ độ gốc).

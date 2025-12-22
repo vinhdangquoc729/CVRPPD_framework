@@ -7,14 +7,17 @@ from ..data.loader_modified import load_problem_modified
 
 from ..solvers.dfa import DFASolver
 from ..solvers.ga_hct_pd import GA_HCT_PD_Solver
+from ..solvers.ga_pd_hct import GAPD_HCT_Solver
 from ..solvers.esa import ESASolver
 from ..solvers.dfa_modified import DFASolverPD
 from ..solvers.esa_modified import ESASolverPD
 from ..solvers.cluster_ga_modified import ClusterGASolverPD
 from ..solvers.cluster_ga import ClusterGASolver
+from ..solvers.ga_ombuki import OmbukiGASolver
 
 from ..core.eval import evaluate
 from ..core.eval_modified import evaluate_modified
+from ..core.eval_org import evaluate as evaluate_org
 
 from ..utils.visualize import draw_solution
 from ..utils.reconstruct import reconstruct_with_refills
@@ -25,8 +28,10 @@ SOLVERS = {
     "dfa_pd": DFASolverPD,
     "esa_pd": ESASolverPD,
     "ga_hct_pd": GA_HCT_PD_Solver,
+    "ga_pd_hct": GAPD_HCT_Solver,
     "cluster_ga": ClusterGASolver,
     "cluster_ga_pd": ClusterGASolverPD,
+    "ga_ombuki": OmbukiGASolver,
 }
 
 def main():
@@ -41,23 +46,24 @@ def main():
     ap.add_argument("--annotate", action="store_true", help="Annotate customer IDs on plot")
     ap.add_argument(
         "--evaluator",
-        choices=["orig", "pd"],
+        choices=["orig", "pd", "org"],
         default=None,
-        help="orig = evaluate (AC-VRP-SPDVCFP), pd = evaluate_modified (VRPPD với precedence). "
+        help="orig = evaluate (AC-VRP-SPDVCFP), pd = evaluate_modified (VRPPD với precedence), org = evaluate_org (original). "
              "Nếu bỏ trống sẽ tự suy theo tên solver (_pd => pd)."
     )
     args = ap.parse_args()
 
-    if args.evaluator is None:
-        use_eval_modified = args.solver.endswith("_pd")
-    else:
-        use_eval_modified = (args.evaluator == "pd")
-    EVAL = evaluate_modified if use_eval_modified else evaluate
-
-    if use_eval_modified:
+    # Determine which evaluator to use
+    if args.evaluator == "org":
+        EVAL = evaluate_org
+        prob = load_problem(args.data)
+        chosen_loader = "org"
+    elif args.evaluator == "pd" or (args.evaluator is None and args.solver.endswith("_pd")):
+        EVAL = evaluate_modified
         prob = load_problem_modified(args.data)
         chosen_loader = "modified"
     else:
+        EVAL = evaluate
         prob = load_problem(args.data)
         chosen_loader = "orig"
 
@@ -75,7 +81,6 @@ def main():
 
     print("data_dir:", str(Path(args.data).resolve()))
     print("loader:", chosen_loader)
-    print("evaluator:", "pd" if use_eval_modified else "orig")
     print("solver:", args.solver)
     print("seed:", args.seed)
     print("time:", round(elapsed, 3), "s")

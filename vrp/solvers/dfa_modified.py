@@ -10,7 +10,7 @@ from ..core.eval_modified import evaluate_modified
 
 
 class DFASolverPD(Solver):
-    def __init__(self, problem: Problem, seed: int = 42, pop_size: int = 80, gamma: float = 0.95):
+    def __init__(self, problem: Problem, seed: int = 42, pop_size: int = 40, gamma: float = 0.95):
         super().__init__(problem, seed)
         self.pop_size = pop_size
         self.gamma = gamma
@@ -235,22 +235,14 @@ class DFASolverPD(Solver):
         self._co_locate_pd_same_vehicle(s)
 
     def _move_bundle_relocate(self, s: Solution) -> None:
-        """
-        Bundle Relocate cho cặp p–d:
-          - Chọn ngẫu nhiên 1 node; nếu node thuộc cặp, coi bó = {p, d}.
-          - Cắt bó khỏi route(s) gốc.
-          - Chèn vào 1 route đích (có thể là chính route pickup hoặc route khác), với thứ tự p trước d.
-          - Duyệt một số vị trí đại diện (trước depot cuối) để chọn vị trí có chi phí thấp.
-        """
         P = self.problem
         p2d, d2p = self._pd_maps()
-        # Tập node khách
+
         all_nodes = [x for r in s.routes for x in r.seq if not P.nodes[x].is_depot]
         if not all_nodes:
             return
         x = random.choice(all_nodes)
 
-        # Xác định bó (p, d). Nếu x không thuộc PD -> dùng intra_insertion
         if x in p2d:
             p, d = x, p2d[x]
         elif x in d2p:
@@ -264,82 +256,33 @@ class DFASolverPD(Solver):
         if r_p is None or r_d is None:
             return
 
-        # Chọn route đích (có thể chính route pickup để tái sắp xếp)
-        r_to_idx = random.randrange(len(s.routes))
-        # Bắt đầu thao tác trên bản sao
-        base = copy.deepcopy(s)
+        # cắt d khỏi route d (nếu khác route p)
+        if r_p != r_d:
+            s.routes[r_d].seq.pop(j_d)
+            # NOTE: không evaluate ở đây
 
-        # CẮT d và p khỏi route gốc (nếu cùng route thì phải cắt index lớn trước)
-        def remove_node(sol: Solution, ridx: int, jidx: int):
-            sol.routes[ridx].seq.pop(jidx)
+        # chèn d NGAY SAU p trong chính route p (một vị trí duy nhất)
+        # cập nhật j_p nếu trước đó đã pop trong cùng route
+        # (nếu r_p == r_d và j_d < j_p, sau khi pop, j_p -= 1)
+        if r_p == r_d and j_d < j_p:
+            j_p -= 1
 
-        # tìm index hiện tại trên base
-        rp_cur, jp_cur = self._find_route_and_index(base, p)
-        rd_cur, jd_cur = self._find_route_and_index(base, d)
-        if rp_cur is None or rd_cur is None:
-            return
+        seq_p = s.routes[r_p].seq
+        insert_pos = min(j_p + 1, len(seq_p) - 1)  # trước depot cuối
+        seq_p.insert(insert_pos, d)
 
-        if rp_cur == rd_cur:
-            # cùng route -> cắt theo thứ tự giảm dần index
-            if jp_cur < jd_cur:
-                remove_node(base, rd_cur, jd_cur)
-                remove_node(base, rp_cur, jp_cur)
-            else:
-                remove_node(base, rp_cur, jp_cur)
-                remove_node(base, rd_cur, jd_cur)
-        else:
-            remove_node(base, rd_cur, jd_cur)
-            remove_node(base, rp_cur, jp_cur)
-
-        # Chèn vào route đích: p trước d
-        seq_to = base.routes[r_to_idx].seq
-        # Vị trí hợp lệ để chèn: [1 .. len(seq_to)-1] (trước depot cuối)
-        positions = list(range(1, len(seq_to)))
-        if not positions:
-            return
-
-        # Để tiết kiệm, chỉ duyệt khoảng ~6 vị trí đại diện cho pickup, và sau đó duyệt một số vị trí cho delivery
-        stride = max(1, len(positions) // 6)
-        pick_positions = positions[::stride] if stride > 1 else positions
-
-        best, best_sol = float("inf"), None
-        for ip in pick_positions:
-            # chèn p trước, rồi thử một số vị trí cho d (sau ip)
-            seq_after_p = seq_to[:ip] + [p] + seq_to[ip:]
-            # d chỉ được đặt sau p và trước depot cuối (tức range(ip+1, len(...)))
-            d_positions = list(range(ip + 1, len(seq_after_p)))
-            if not d_positions:
-                continue
-            # cũng lấy stride
-            stride_d = max(1, len(d_positions) // 6)
-            d_try = d_positions[::stride_d] if stride_d > 1 else d_positions
-            for idl in d_try:
-                cand = copy.deepcopy(base)
-                cand.routes[r_to_idx].seq = seq_after_p[:idl] + [d] + seq_after_p[idl:]
-                c = self._cost(cand)
-                if c < best:
-                    best, best_sol = c, cand
-
-        if best_sol:
-            s.routes = best_sol.routes
-            # chốt an toàn
-            self._co_locate_pd_same_vehicle(s)
 
     def _random_move(self, s: Solution) -> None:
-        """Chọn move có hiểu biết PD (ưu tiên bundle relocate)."""
         mv = random.random()
         if mv < 0.60:
-            self._move_bundle_relocate(s)   # mạnh nhất, giữ same-vehicle + precedence
+            self._move_bundle_relocate(s)
         elif mv < 0.90:
-            self._move_two_opt(s)           # 2-opt có kiểm tra precedence
+            self._move_two_opt(s)
         else:
-            self._move_intra_insertion(s)   # intra an toàn
-
-    # ------------------------- Distance (for "brightness") -------------------------
+            self._move_intra_insertion(s)
 
     @staticmethod
     def _flatten_order(P: Problem, sol: Solution) -> List[int]:
-        """Chuỗi khách theo thứ tự đi qua (bỏ depot) để đo khoảng cách Hamming-like."""
         out = []
         for r in sol.routes:
             out.extend([i for i in r.seq if not P.nodes[i].is_depot])
@@ -351,12 +294,10 @@ class DFASolverPD(Solver):
         L = min(len(A), len(B))
         return sum(1 for i in range(L) if A[i] != B[i]) + abs(len(A) - len(B))
 
-    # ------------------------- Solve loop -------------------------
-
     def solve(
         self,
-        time_limit_sec: float = 10000.0,
-        patience_iters: int = 50,
+        time_limit_sec: float = 1000000.0,
+        patience_iters: int = 80,
         max_generations: int = 500,
     ) -> Solution:
         import time as _time

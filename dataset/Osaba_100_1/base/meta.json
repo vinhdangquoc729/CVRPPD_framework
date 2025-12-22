@@ -1,0 +1,13 @@
+{
+  "source": "Osaba_100_1.xml",
+  "created_at": "2025-12-18T17:38:35.670193Z",
+  "type": "single_depot_single_vehicle_with_time_windows",
+  "time_window_units": "minutes_from_midnight",
+  "tw_penalty_per_min": 10.0,
+  "travel_speed_units_per_min": 1000.0,
+  "service_time_units": "minutes",
+  "distance_units": "euclidean (coordinate units)",
+  "n_depots": 1,
+  "n_vehicles": 1,
+  "note": "Base mirrors original amounts; PD-paired applies to expanded/synthetic sets."
+}
