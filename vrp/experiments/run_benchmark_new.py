@@ -13,6 +13,8 @@ try:
     from ..data.loader_modified import load_problem_modified
     from ..core.eval import evaluate
     from ..core.eval_modified import evaluate_modified
+    from ..core.eval_org import evaluate as evaluate_org
+    from ..core.eval_with_weight import evaluate_with_weight
 
     # Import các Solvers
     from ..solvers.dfa import DFASolver
@@ -24,6 +26,7 @@ try:
     from ..solvers.cluster_ga_modified import ClusterGASolverPD
     from ..solvers.cluster_ga import ClusterGASolver
     from ..solvers.ga_ombuki import OmbukiGASolver
+    from ..solvers.ga_pd_hct_origin import GAPD_HCT_ORIGIN_Solver
 except ImportError:
     print("Lỗi: Không thể import các module. Hãy đảm bảo chạy script bằng lệnh: python -m vrp.experiments.run_benchmark_new")
     sys.exit(1)
@@ -38,6 +41,7 @@ SOLVERS = {
     "cluster_ga": ClusterGASolver,
     "cluster_ga_pd": ClusterGASolverPD,
     "ga_ombuki": OmbukiGASolver,
+    "ga_pd_hct_origin": GAPD_HCT_ORIGIN_Solver,
 }
 
 # Danh sách các loại phạt (Penalty) dựa theo eval.py
@@ -63,19 +67,28 @@ def run_single_instance(data_path: Path, solver_name: str, seed: int,
 
     try:
         # 1. Xác định loader và evaluator
-        use_modified = (evaluator_mode == "pd") if evaluator_mode else solver_name.endswith("_pd")
-        loader_func = load_problem_modified if use_modified else load_problem
-        eval_func = evaluate_modified if use_modified else evaluate
-
+        eval_func = None
+        if evaluator_mode == "pd":
+            eval_func = evaluate_modified
+            loader_func = load_problem_modified
+        elif evaluator_mode == "org":
+            eval_func = evaluate_org
+            loader_func = load_problem
+        elif evaluator_mode == "with_weight":
+            eval_func = evaluate_with_weight
+            loader_func = load_problem
+        else:
+            eval_func = evaluate
+            loader_func = load_problem
         prob = loader_func(str(data_path))
         
         # 2. Khởi tạo Solver
         SolverCls = SOLVERS[solver_name]
         # Thử truyền max_generation, nếu không hỗ trợ thì fallback
         try:
-            solver = SolverCls(prob, seed=seed, max_generation=max_gen)
+            solver = SolverCls(prob, seed=seed, max_generation=max_gen, evaluator=eval_func)
         except TypeError:
-            solver = SolverCls(prob, seed=seed)
+            solver = SolverCls(prob, seed=seed, evaluator=eval_func)
 
         # 3. Chạy Solver
         t0 = time.time()
@@ -120,7 +133,7 @@ def main():
     parser.add_argument("--max_gen", type=int, default=500)
     parser.add_argument("--out", type=str, default="benchmark_summary.csv")
     parser.add_argument("--out_raw", type=str, default="benchmark_raw_details.csv")
-    parser.add_argument("--evaluator", choices=["orig", "pd", "org"], default=None)
+    parser.add_argument("--evaluator", choices=["orig", "pd", "org", "with_weight"], default=None)
     args = parser.parse_args()
 
     data_paths = sorted([p for p in Path(".").glob(args.data_glob) if p.is_dir()])
@@ -130,7 +143,7 @@ def main():
     for data_path in data_paths:
         for solver_name in args.solvers:
             for seed in args.seeds:
-                print(f"Running {solver_name} on {data_path} (Seed {seed})...")
+                print(f"Running {solver_name} on {data_path} (Seed {seed}) with evaluator {args.evaluator}...")
                 res = run_single_instance(data_path, solver_name, seed, args.time, args.max_gen, args.evaluator)
                 raw_results.append(res)
 

@@ -16,12 +16,14 @@ class DFASolver(Solver):
         seed: int = 42,
         pop_size: int = 50,
         gamma: float = 0.95,
+        evaluator: callable = None,
     ):
         super().__init__(problem, seed)
         self.pop_size = pop_size
         self.gamma = gamma
         self.rng = random.Random(seed)
-        # Pre-cache depot ID để tránh truy cập thuộc tính object trong vòng lặp
+        self.evaluator = evaluator if evaluator is not None else evaluate
+        # Pre-cache depot ID
         self._veh2dep = {v.id: v.depot_id for v in self.problem.vehicles}
 
     # =========================
@@ -88,12 +90,12 @@ class DFASolver(Solver):
                         routes.append(Route(vehicle_id=v.id, seq=[dep] + segment + [dep]))
             
             sol = Solution(routes=routes)
-            cost, _ = evaluate(P, sol, return_details=False)
+            cost, _ = self.evaluator(P, sol, return_details=False)
             pop_data.append({'sol': sol, 'cost': cost, 'flat': self._get_flattened(sol)})
         return pop_data
 
     # =========================
-    # Phép toán Di chuyển (Tối ưu Shallow Copy)
+    # Phép toán Di chuyển
     # =========================
 
     def _fast_insertion_move(self, sol: Solution) -> Solution:
@@ -128,8 +130,24 @@ class DFASolver(Solver):
             new_routes[idx_dst] = Route(vehicle_id=rt_dst.vehicle_id, seq=new_seq_dst)
         return Solution(routes=new_routes)
 
+    def _save_final_population_details(self, population_data: List[Dict[str, Any]], filename: str = "dfa_final_pop_details.csv"):
+        import pandas as pd
+        all_records = []
+        for i, entry in enumerate(population_data):
+            sol = entry['sol']
+            cost, details = self.evaluator(self.problem, sol, return_details=True)
+            record = {
+                "individual_id": i,
+                "total_cost": cost,
+                **details,
+                "solution_str": str(sol)
+            }
+            all_records.append(record)
+        df = pd.DataFrame(all_records)
+        df.to_csv(filename, index=False)
+
     # =========================
-    # Giải thuật Discrete Firefly (Tối ưu Jumps)
+    # Giải thuật Discrete Firefly
     # =========================
 
     def solve(
@@ -144,35 +162,29 @@ class DFASolver(Solver):
         best_entry = pop_data[0]
 
         gen, no_improve, t0 = 0, 0, _time.time()
-        
-        # Giới hạn số "hướng nhảy" tối đa mỗi cá thể quan sát
         MAX_JUMPS_PER_ENTITY = 5 
 
         while (_time.time() - t0) < time_limit_sec and (max_generations is None or gen < max_generations):
-            # Luôn so sánh với các cá thể tốt hơn (targets)
             new_pop_data = []
 
             for i in range(len(pop_data)):
                 xi_entry = pop_data[i]
                 success_jumps = 0
                 
-                # Duyệt qua các cá thể sáng hơn xj (index j < i)
                 for j in range(i):
                     target = pop_data[j]
                     
                     if target['cost'] < xi_entry['cost']:
-                        # Tính rij nhanh bằng flat cache
                         A, B = xi_entry['flat'], target['flat']
                         L = min(len(A), len(B))
                         rij = sum(1 for k in range(L) if A[k] != B[k]) + abs(len(A) - len(B))
                         
-                        # Thử cải thiện xi theo hướng target
                         step_max = max(1, int(rij * (self.gamma ** gen) * 0.1))
                         improved_this_direction = False
                         
                         for _ in range(step_max):
                             cand_sol = self._fast_insertion_move(xi_entry['sol'])
-                            c_val, _ = evaluate(P, cand_sol, return_details=False)
+                            c_val, _ = self.evaluator(P, cand_sol, return_details=False)
                             
                             if c_val < xi_entry['cost']:
                                 xi_entry = {
@@ -181,23 +193,21 @@ class DFASolver(Solver):
                                     'flat': self._get_flattened(cand_sol)
                                 }
                                 improved_this_direction = True
-                                break # Early exit cho step_max
+                                break 
                         
                         if improved_this_direction:
                             success_jumps += 1
                             if success_jumps >= MAX_JUMPS_PER_ENTITY:
-                                break # Đạt giới hạn 5 hướng nhảy thành công
+                                break 
                 
-                # Nếu không có hướng nhảy nào tốt (hoặc là con tốt nhất), thử đột biến nhẹ
                 if success_jumps == 0:
                     mutated = self._fast_insertion_move(xi_entry['sol'])
-                    m_cost, _ = evaluate(P, mutated, return_details=False)
+                    m_cost, _ = self.evaluator(P, mutated, return_details=False)
                     if m_cost < xi_entry['cost']:
                         xi_entry = {'sol': mutated, 'cost': m_cost, 'flat': self._get_flattened(mutated)}
 
                 new_pop_data.append(xi_entry)
 
-            # Sắp xếp và chọn lọc thế hệ mới
             new_pop_data.sort(key=lambda x: x['cost'])
             pop_data = new_pop_data[:self.pop_size]
 
@@ -210,4 +220,5 @@ class DFASolver(Solver):
             print(f"Gen {gen} | Best: {best_entry['cost']:.2f} | Jumps/Ent: {MAX_JUMPS_PER_ENTITY}", end='\r')
             if patience_iters and no_improve >= patience_iters: break
 
+        self._save_final_population_details(pop_data, filename=f"last_generation/dfa_final_pop_seed{self.seed}.csv")
         return best_entry['sol']

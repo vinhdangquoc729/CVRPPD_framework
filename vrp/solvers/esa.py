@@ -6,15 +6,15 @@ from ..core.problem import Problem
 from ..core.solution import Solution, Route
 from ..core.eval import evaluate
 
-
 class ESASolver(Solver):
     def __init__(self, problem: Problem, seed: int = 42,
-                 mu: int = 20,                 # cỡ quần thể
-                 elite_frac: float = 0.3,         # giữ elite
-                 alpha: float = 0.95,             # cooling rate
-                 trials_per_iter: int = 8,        # số láng giềng cho mỗi cá thể/iter
-                 patience_iters: int = 25,        # early stop nếu không cải thiện
-                 max_generation: int = 500,       # THÊM: giới hạn số thế hệ tối đa
+                 mu: int = 50,                  
+                 elite_frac: float = 0.7,       
+                 alpha: float = 0.95,           
+                 trials_per_iter: int = 8,
+                 patience_iters: int = 25,
+                 max_generation: int = 500,
+                 evaluator: callable = None,
                  ):
         super().__init__(problem, seed)
         self.rng = random.Random(seed)
@@ -23,9 +23,8 @@ class ESASolver(Solver):
         self.alpha = alpha
         self.trials_per_iter = trials_per_iter
         self.patience_iters = patience_iters
-        self.max_generation = max_generation # Lưu tham số max_generation
-
-    # ... [Các hàm _vehicles_by_depot, _customers_by_nearest_depot, _init_population giữ nguyên] ...
+        self.max_generation = max_generation
+        self.evaluator = evaluator if evaluator is not None else evaluate
 
     def _vehicles_by_depot(self) -> Dict[int, List]:
         by_dep: Dict[int, List] = {}
@@ -164,70 +163,71 @@ class ESASolver(Solver):
             rt.seq = [n for n in rt.seq if n != depot_id] + [depot_id]
         return s
 
-    # =========================
-    # Hàm solve với max_generation
-    # =========================
-    def solve(self, time_limit_sec: float = 30.0) -> Solution:
+    def _save_final_population_details(self, population: List[Solution], filename: str = "final_pop_details_esa.csv"):
+        import pandas as pd
+        all_records = []
+        for i, sol in enumerate(population):
+            cost, details = self.evaluator(self.problem, sol, return_details=True)
+            record = {
+                "individual_id": i,
+                "total_cost": cost,
+                **details,
+                "solution_str": str(sol)
+            }
+            all_records.append(record)
+        df = pd.DataFrame(all_records)
+        df.to_csv(filename, index=False)
+
+    def solve(self, time_limit_sec: float = 60.0) -> Solution:
         P = self.problem
         r = self.rng
         t0 = time.time()
 
         pop = self._init_population()
-
-        cost_cache: Dict[Tuple[Tuple[int, ...], ...], float] = {}
-
-        def key_of(s: Solution):
-            return tuple(tuple(rt.seq) for rt in s.routes)
-
+        
         def cost_of(s: Solution) -> float:
-            k = key_of(s)
-            v = cost_cache.get(k)
-            if v is None:
-                v, _ = evaluate(P, s, return_details=False)
-                cost_cache[k] = v
-            return v
+            val, _ = self.evaluator(P, s, return_details=False)
+            return val
 
         pop.sort(key=cost_of)
-        best = pop[0]
-        best_cost = cost_of(best)
+        
+        f_best = cost_of(pop[0])
+        f_worst = cost_of(pop[-1])
+        sup_delta_f = f_worst - f_best
+        p = 0.95
+        T = (-sup_delta_f / math.log(p)) if sup_delta_f > 0 else 1.0
 
-        costs0 = [cost_of(s) for s in pop]
-        spread = max(costs0) - min(costs0) if len(costs0) > 1 else max(1.0, abs(costs0[0]))
-        T = spread / max(1.0, math.log(1 / 0.95))
+        best = pop[0]
+        best_cost = f_best
 
         patience = 0
         it = 0
 
-        # SỬA: Thêm điều kiện it < self.max_generation
         while (time.time() - t0 < time_limit_sec) and (it < self.max_generation):
             it += 1
-            print(f"Iteration {it}: best_cost = {best_cost}", end="\r")
+            print(f"Generation {it}, best cost = {best_cost}", end='\r')
             new_pop: List[Solution] = []
 
-            elite_k = max(1, int(self.elite_frac * self.mu))
-            elites = pop[:elite_k]
-            new_pop.extend(elites)
+            elite_k = int(self.elite_frac * self.mu)
+            new_pop.extend(pop[:elite_k])
 
             while len(new_pop) < self.mu:
-                if len(pop) >= 2:
-                    a, b = r.sample(pop, 2)
-                    parent = a if cost_of(a) <= cost_of(b) else b
-                else:
-                    parent = pop[0]
+                parent = r.choice(pop[:elite_k])
                 child = parent
+                
                 for _ in range(self.trials_per_iter):
                     cand = self._neighbor(child)
                     dE = cost_of(cand) - cost_of(child)
+                    
                     if dE <= 0 or r.random() < math.exp(-dE / max(1e-6, T)):
                         child = cand
                 new_pop.append(child)
 
             pop = sorted(new_pop, key=cost_of)
-            cur_best = pop[0]
-            cur_cost = cost_of(cur_best)
+            cur_best_cost = cost_of(pop[0])
 
-            if cur_cost < best_cost:
-                best, best_cost = cur_best, cur_cost
+            if cur_best_cost < best_cost:
+                best, best_cost = pop[0], cur_best_cost
                 patience = 0
             else:
                 patience += 1
@@ -235,7 +235,7 @@ class ESASolver(Solver):
                     break
 
             T *= self.alpha
-            if T < 1e-6:
-                T = 1e-6
+            if T < 1e-6: T = 1e-6
 
+        self._save_final_population_details(pop, filename=f"last_generation/esa_final_pop_seed{self.seed}.csv")
         return best

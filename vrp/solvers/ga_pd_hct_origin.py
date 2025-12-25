@@ -1,4 +1,4 @@
-# vrp/solvers/ga_pd_hct.py
+# vrp/solvers/ga_pd_hct_origin.py
 from __future__ import annotations
 import random, math, time, copy
 from dataclasses import dataclass
@@ -99,7 +99,7 @@ def decode_to_solution(P: Problem, enc: EncodedSolution) -> Solution:
 #   GA (Optimized)
 # =========================
 
-class GAPD_HCT_Solver(Solver):
+class GAPD_HCT_ORIGIN_Solver(Solver):
     def __init__(self, problem: Problem, seed: int = 42, pop_size: int = 50, elite_frac: float = 0.1,
                  tournament_k: int = 2, p_cx: float = 0.9, p_mut: float = 0.2, p_route_mut: float = 0.2,
                  max_generations: int = 500, patience: int = 50, power_k: float = 1.0, evaluator: callable = None):
@@ -130,7 +130,7 @@ class GAPD_HCT_Solver(Solver):
     def _init_population(self) -> List[EncodedSolution]:
         pop = []
         for _ in range(self.pop_size):
-            s = self._build_initial_solution_guided()
+            s = self._build_initial_solution_randomly()
             pop.append(encode_from_solution(self.problem, s))
         return pop
 
@@ -380,7 +380,7 @@ class GAPD_HCT_Solver(Solver):
 
                 for c in [c1, c2]:
                     if self.rng.random() < self.p_mut: self._mutation(c)
-                    if self.rng.random() < self.p_route_mut: self._mutation_move_route(c)
+                    # if self.rng.random() < self.p_route_mut: self._mutation_move_route(c)
                     self._repair_uniqueness(c)
                     if len(new_pop) < self.pop_size: new_pop.append(c)
 
@@ -393,13 +393,12 @@ class GAPD_HCT_Solver(Solver):
             else: patience += 1
             print(f"Gen {gen} | Best: {best_cost:.2f} | P: {patience}", end='\r')
 
-        self._save_final_population_details(pop, filename=f"last_generation/ga_tcpvrp_final_pop_seed{self.seed}.csv")
+        self._save_final_population_details(pop, filename=f"last_generation/ga_tcpvrp_origin_final_pop_seed{self.seed}.csv")
         return decode_to_solution(self.problem, best_enc)
     
     def _save_final_population_details(self, population: List[EncodedSolution], filename: str = "final_pop_details.csv"):
         import pandas as pd
-        all_records = []
-                
+        all_records = []        
         for i, enc in enumerate(population):
             # 1. Decode cá thể thành lời giải thực tế
             sol = decode_to_solution(self.problem, enc)

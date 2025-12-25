@@ -14,10 +14,12 @@ from ..solvers.esa_modified import ESASolverPD
 from ..solvers.cluster_ga_modified import ClusterGASolverPD
 from ..solvers.cluster_ga import ClusterGASolver
 from ..solvers.ga_ombuki import OmbukiGASolver
+from ..solvers.ga_pd_hct_origin import GAPD_HCT_ORIGIN_Solver
 
 from ..core.eval import evaluate
 from ..core.eval_modified import evaluate_modified
 from ..core.eval_org import evaluate as evaluate_org
+from ..core.eval_with_weight import evaluate_with_weight
 
 from ..utils.visualize import draw_solution
 from ..utils.reconstruct import reconstruct_with_refills
@@ -32,6 +34,7 @@ SOLVERS = {
     "cluster_ga": ClusterGASolver,
     "cluster_ga_pd": ClusterGASolverPD,
     "ga_ombuki": OmbukiGASolver,
+    "ga_pd_hct_origin": GAPD_HCT_ORIGIN_Solver,
 }
 
 def main():
@@ -46,7 +49,7 @@ def main():
     ap.add_argument("--annotate", action="store_true", help="Annotate customer IDs on plot")
     ap.add_argument(
         "--evaluator",
-        choices=["orig", "pd", "org"],
+        choices=["orig", "pd", "org", "with_weight"],
         default=None,
         help="orig = evaluate (AC-VRP-SPDVCFP), pd = evaluate_modified (VRPPD với precedence), org = evaluate_org (original). "
              "Nếu bỏ trống sẽ tự suy theo tên solver (_pd => pd)."
@@ -62,17 +65,21 @@ def main():
         EVAL = evaluate_modified
         prob = load_problem_modified(args.data)
         chosen_loader = "modified"
-    else:
+    elif args.evaluator == "orig":
         EVAL = evaluate
         prob = load_problem(args.data)
         chosen_loader = "orig"
+    else:
+        EVAL = evaluate_with_weight
+        prob = load_problem(args.data)
+        chosen_loader = "with_weight"
 
     cfg = {}
     if args.config:
         cfg = yaml.safe_load(Path(args.config).read_text()) or {}
 
     SolverCls = SOLVERS[args.solver]
-    solver = SolverCls(prob, seed=args.seed, **cfg)
+    solver = SolverCls(prob, seed=args.seed, evaluator=EVAL, **cfg)
 
     t0 = time.time()
     sol = solver.solve(time_limit_sec=args.time)
