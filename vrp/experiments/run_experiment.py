@@ -1,3 +1,4 @@
+# vrp/experiments/run_experiment.py
 import argparse, time
 from pathlib import Path
 import yaml
@@ -97,7 +98,19 @@ def main():
 
     if args.plot:
         out = args.plot_path or str(Path(args.data) / f"solution_{args.solver}.png")
-        viz_sol = reconstruct_with_refills(prob, sol)
+        
+        # --- SỬA Ở ĐÂY ---
+        # Chỉ dùng reconstruct_with_refills cho bài toán gốc/cluster cũ.
+        # Với bài toán Modified (Order-based), ta vẽ trực tiếp solution 
+        # (hàm draw_solution mới sẽ tự nối Depot đầu/cuối).
+        
+        if chosen_loader == "modified" or args.evaluator == "pd":
+            # Không cần reconstruct phức tạp, vẽ trực tiếp
+            viz_sol = sol
+        else:
+            # Logic cũ cho Cluster GA
+            viz_sol = sol
+            
         draw_solution(prob, viz_sol, save_path=out, show=False, annotate=args.annotate)
         print(f"Saved plot to: {out}")
 

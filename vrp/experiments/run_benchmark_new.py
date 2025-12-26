@@ -1,3 +1,4 @@
+# vrp/experiments/run_benchmark_new.py
 from __future__ import annotations
 import argparse
 import time
@@ -7,16 +8,18 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Any
 
-# Import các thành phần từ project
+# Import modules
 try:
     from ..data.loader import load_problem
     from ..data.loader_modified import load_problem_modified
+    
+    # Import evaluators
     from ..core.eval import evaluate
     from ..core.eval_modified import evaluate_modified
     from ..core.eval_org import evaluate as evaluate_org
     from ..core.eval_with_weight import evaluate_with_weight
 
-    # Import các Solvers
+    # Import Solvers
     from ..solvers.dfa import DFASolver
     from ..solvers.ga_hct_pd import GA_HCT_PD_Solver
     from ..solvers.ga_pd_hct import GAPD_HCT_Solver
@@ -28,7 +31,7 @@ try:
     from ..solvers.ga_ombuki import OmbukiGASolver
     from ..solvers.ga_pd_hct_origin import GAPD_HCT_ORIGIN_Solver
 except ImportError:
-    print("Lỗi: Không thể import các module. Hãy đảm bảo chạy script bằng lệnh: python -m vrp.experiments.run_benchmark_new")
+    print("Error: Could not import modules. Make sure to run as module: python -m vrp.experiments.run_benchmark_new")
     sys.exit(1)
 
 SOLVERS = {
@@ -44,20 +47,22 @@ SOLVERS = {
     "ga_pd_hct_origin": GAPD_HCT_ORIGIN_Solver,
 }
 
-# Danh sách các loại phạt (Penalty) dựa theo eval.py
+# Updated Penalty Keys based on your evaluate function outputs
 PENALTY_KEYS = [
     'tw_penalty', 
-    'cap_violations', 
-    'overtime_routes', 
-    'unserved_customers', 
-    'prohibited_uses', 
-    'continuity_errors'
+    'capacity_violations', 
+    'stockout_violations', 
+    'goods_incompatibility', 
+    'goods_not_allowed', 
+    'overtime_violations', 
+    'unserved_orders'
 ]
 
 def get_vehicles_used(sol) -> int:
-    """Đếm số xe thực tế có phục vụ khách hàng (len > 2)."""
+    """Count vehicles with non-empty routes (len > 2 usually implies [depot, ..., depot])."""
     if not sol or not sol.routes: return 0
-    active_routes = [r for r in sol.routes if len(r.seq) > 2]
+    # Assuming route structure is [start_depot, ... orders/nodes ..., end_depot]
+    active_routes = [r for r in sol.routes if len(r.seq) > 2] 
     return len(active_routes)
 
 def run_single_instance(data_path: Path, solver_name: str, seed: int, 
@@ -66,67 +71,83 @@ def run_single_instance(data_path: Path, solver_name: str, seed: int,
     res = {"instance": instance_id, "solver": solver_name, "seed": seed, "ok": False, "error": ""}
 
     try:
-        # 1. Xác định loader và evaluator
+        # 1. Determine Loader and Evaluator (Logic synced with run_experiment.py)
         eval_func = None
-        if evaluator_mode == "pd":
+        loader_func = None
+        
+        # Default behavior matches run_experiment logic
+        if evaluator_mode == "org":
+            eval_func = evaluate_org
+            loader_func = load_problem
+        elif evaluator_mode == "pd" or (evaluator_mode is None and solver_name.endswith("_pd")):
             eval_func = evaluate_modified
             loader_func = load_problem_modified
-        elif evaluator_mode == "org":
-            eval_func = evaluate_org
+        elif evaluator_mode == "orig":
+            eval_func = evaluate
             loader_func = load_problem
         elif evaluator_mode == "with_weight":
             eval_func = evaluate_with_weight
             loader_func = load_problem
         else:
+            # Default fallback
             eval_func = evaluate
             loader_func = load_problem
+
+        # Load Problem
         prob = loader_func(str(data_path))
         
-        # 2. Khởi tạo Solver
+        # 2. Initialize Solver
         SolverCls = SOLVERS[solver_name]
-        # Thử truyền max_generation, nếu không hỗ trợ thì fallback
+        
+        # Handle solver initialization arguments
+        # Some solvers might not accept max_generation, so we try/except or inspect
         try:
             solver = SolverCls(prob, seed=seed, max_generation=max_gen, evaluator=eval_func)
         except TypeError:
+            # Fallback for solvers that don't take max_generation in __init__
             solver = SolverCls(prob, seed=seed, evaluator=eval_func)
 
-        # 3. Chạy Solver
+        # 3. Run Solver
         t0 = time.time()
         sol = solver.solve(time_limit_sec=time_limit)
         runtime = time.time() - t0
 
-        # 4. Đánh giá kết quả
+        # 4. Evaluate Result
         cost, details = eval_func(prob, sol, return_details=True)
         
-        # CHỈNH SỬA TẠI ĐÂY: Khớp với key "fixed" trong hàm evaluate của bạn
-        fixed_val = details.get('fixed', 0) 
+        # Extract metrics safely
+        dist_val = details.get('distance', 0)
+        # Check for 'fixed_cost' or 'fixed' depending on specific eval implementation
+        fixed_val = details.get('fixed_cost', details.get('fixed', 0))
 
         res.update({
             "ok": True,
             "total_cost": cost,
-            "distance": details.get('distance', 0),
-            "fixed_cost": fixed_val,  # Lưu vào bảng với tên fixed_cost cho dễ hiểu
+            "distance": dist_val,
+            "fixed_cost": fixed_val,
             "runtime": runtime,
             "vehicles_used": get_vehicles_used(sol),
             "routes_count": len([r for r in sol.routes if len(r.seq) > 2]),
-            "solution": str(sol)
+            # "solution": str(sol) # Uncomment if you want full solution string in CSV (can be large)
         })
 
-        # 5. Lưu các loại penalty chi tiết
+        # 5. Record Penalties
         total_p = 0
         for k in PENALTY_KEYS:
             val = details.get(k, 0)
             res[k] = val
             total_p += val
-        res["total_penalty"] = total_p
+        res["total_penalty_sum"] = total_p
 
     except Exception as e:
         res["error"] = str(e)
+        # print(f"Error running {solver_name} on {instance_id}: {e}") # Debug print
+
     return res
 
 def main():
-    parser = argparse.ArgumentParser(description="VRP Benchmark Runner - Fixed Cost Corrected")
-    parser.add_argument("--data_glob", required=True, help="Glob pattern dataset")
+    parser = argparse.ArgumentParser(description="VRP Benchmark Runner - Synced with run_experiment")
+    parser.add_argument("--data_glob", required=True, help="Glob pattern for dataset folders (e.g. 'dataset/*')")
     parser.add_argument("--solvers", nargs="+", default=list(SOLVERS.keys()))
     parser.add_argument("--seeds", nargs="+", type=int, default=[42])
     parser.add_argument("--time", type=float, default=30.0)
@@ -136,47 +157,79 @@ def main():
     parser.add_argument("--evaluator", choices=["orig", "pd", "org", "with_weight"], default=None)
     args = parser.parse_args()
 
-    data_paths = sorted([p for p in Path(".").glob(args.data_glob) if p.is_dir()])
-    if not data_paths: return
+    # Find directories matching the glob pattern
+    # Assuming user passes something like "dataset/Osaba*"
+    # We look for directories inside the base path.
+    # Adjust logic if passing exact paths.
+    
+    # Simple Glob expansion
+    from glob import glob
+    data_paths = sorted([Path(p) for p in glob(args.data_glob) if Path(p).is_dir()])
+    
+    if not data_paths:
+        print(f"No data folders found matching: {args.data_glob}")
+        return
 
     raw_results = []
+    print(f"Found {len(data_paths)} instances. Solvers: {args.solvers}")
+
     for data_path in data_paths:
         for solver_name in args.solvers:
+            if solver_name not in SOLVERS:
+                print(f"Skipping unknown solver: {solver_name}")
+                continue
+                
             for seed in args.seeds:
-                print(f"Running {solver_name} on {data_path} (Seed {seed}) with evaluator {args.evaluator}...")
+                print(f">> Running {solver_name} on {data_path.name} (Seed {seed})...", end=" ", flush=True)
                 res = run_single_instance(data_path, solver_name, seed, args.time, args.max_gen, args.evaluator)
+                
+                if res['ok']:
+                    print(f"OK (Cost: {res['total_cost']:.2f})")
+                else:
+                    print(f"FAILED ({res['error']})")
+                
                 raw_results.append(res)
 
     df = pd.DataFrame(raw_results)
     df.to_csv(args.out_raw, index=False)
 
     df_success = df[df['ok'] == True].copy()
-    if df_success.empty: return
+    if df_success.empty:
+        print("No successful runs to summarize.")
+        return
 
-    # Cấu hình tính toán Summary
+    # Configuration for Aggregation
     agg_dict = {
         'total_cost': ['min', 'mean', 'std'],
         'distance': 'mean',
-        'fixed_cost': 'mean', # Tính Mean cho Fixed Cost chính xác
+        'fixed_cost': 'mean',
         'runtime': 'mean',
         'vehicles_used': 'mean',
-        'total_penalty': 'mean'
+        'total_penalty_sum': 'mean'
     }
-    for k in PENALTY_KEYS: agg_dict[k] = 'mean'
+    # Add specific penalties to aggregation if they exist in df
+    for k in PENALTY_KEYS:
+        if k in df_success.columns:
+            agg_dict[k] = 'mean'
 
     summary = df_success.groupby(['instance', 'solver']).agg(agg_dict)
-    summary.columns = ['_'.join(col).strip() if isinstance(col, tuple) else col for col in summary.columns.values]
+    
+    # Flatten columns
+    summary.columns = ['_'.join(col).strip() for col in summary.columns.values]
     summary = summary.reset_index()
 
-    # Tính Gap dựa trên Best Cost tìm được của Instance đó
+    # Calculate Gap relative to best cost found for that instance (across all solvers/seeds)
     best_instance_cost = df_success.groupby('instance')['total_cost'].min().to_dict()
-    summary['Cost Gap (%)'] = summary.apply(
-        lambda x: ((x['total_cost_min'] - best_instance_cost[x['instance']]) / best_instance_cost[x['instance']]) * 100, axis=1
+    summary['Gap_to_Best_%'] = summary.apply(
+        lambda x: ((x['total_cost_min'] - best_instance_cost[x['instance']]) / best_instance_cost[x['instance']]) * 100 
+        if best_instance_cost[x['instance']] != 0 else 0, 
+        axis=1
     )
 
     summary = summary.round(2)
     summary.to_csv(args.out, index=False)
-    print(f"\nĐã xuất báo cáo. Kiểm tra cột 'fixed_cost_mean' trong {args.out}")
+    print(f"\nBenchmark completed. Summary saved to {args.out}")
+    print(f"Raw details saved to {args.out_raw}")
 
 if __name__ == "__main__":
     main()

@@ -3,100 +3,142 @@ from __future__ import annotations
 import random, math, time, copy
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
+from itertools import groupby
 
 from .solver_base import Solver
-from ..core.problem import Problem
+from ..core.problem import Problem, Order
 from ..core.solution import Solution, Route
 from ..core.eval import evaluate
 
 # =========================
-#   Encoding: Head–Core–Tail
+#   Encoding: Head–Core–Tail (Paper Table 2)
 # =========================
 
 @dataclass
 class Head:
-    priority: List[int]
-    routes_per_vehicle: List[int]
-    nodes_per_route: List[int]
-    orders_per_node: List[int]
+    priority: List[int]             # Thứ tự ưu tiên xe
+    routes_per_veh: List[int]       # Số lượng route mỗi xe
+    nodes_per_route: List[int]      # Số lượng node mỗi route (bao gồm depot)
+    orders_per_node: List[int]      # Số lượng order tại mỗi node ghé thăm
 
 @dataclass
 class EncodedSolution:
     head: Head
-    core_routes: List[List[int]]
-    tail_orders: List[List[int]]
+    core: List[int]                 # Danh sách Node ID (depot + customers)
+    tail: List[int]                 # Danh sách Order ID
 
-def _sync_head_metadata(enc: EncodedSolution) -> None:
-    enc.head.nodes_per_route = [len(seq) for seq in enc.core_routes]
-    flat_orders: List[int] = []
-    for route_tail in enc.tail_orders:
-        flat_orders.extend(route_tail)
-    enc.head.orders_per_node = flat_orders
-
-# ---------- encode/decode ----------
+# =========================
+#   Encode / Decode Logic
+# =========================
 
 def encode_from_solution(P: Problem, sol: Solution) -> EncodedSolution:
-    nV = len(P.vehicles)
+    # 1. Map Vehicle ID -> Index
     id2vidx = {v.id: i for i, v in enumerate(P.vehicles)}
-
-    by_vidx: Dict[int, List[List[int]]] = {}
+    nV = len(P.vehicles)
+    
+    # Cấu trúc tạm để build: assignments[v_idx] = [Route1_Nodes, Route2_Nodes, ...]
+    # Trong đó Route_Nodes = list of (NodeID, [OrderIDs])
+    assignments: List[List[List[Tuple[int, List[int]]]]] = [[] for _ in range(nV)]
+    
+    # 2. Duyệt qua các Route trong Solution
     for r in sol.routes:
-        vidx = id2vidx.get(r.vehicle_id, None)
-        if vidx is None: continue
-        by_vidx.setdefault(vidx, []).append(list(r.seq))
+        v_idx = id2vidx.get(r.vehicle_id)
+        if v_idx is None: continue
+        
+        veh = P.vehicles[v_idx]
+        start_depot = veh.start_depot_id
+        end_depot = veh.end_depot_id
+        
+        route_struct = []
+        route_struct.append((start_depot, [])) # Depot đầu
+        
+        if r.seq:
+            node_order_pairs = []
+            for oid in r.seq:
+                # Map từ Order ID -> Node ID để nhóm lại
+                if oid in P.orders_map:
+                    node_order_pairs.append((P.orders_map[oid].node_id, oid))
+            
+            # Groupby theo NodeID
+            for node_id, group in groupby(node_order_pairs, key=lambda x: x[0]):
+                orders = [x[1] for x in group]
+                route_struct.append((node_id, orders))
+        
+        route_struct.append((end_depot, [])) # Depot cuối
+        assignments[v_idx].append(route_struct)
 
-    def served_cnt(seq: List[int]) -> int:
-        return sum(1 for i in seq if not P.nodes[i].is_depot)
-
-    used = [(vidx, sum(served_cnt(seq) for seq in by_vidx.get(vidx, []))) for vidx in range(nV)]
-    priority: List[int] = [vidx for vidx, _ in sorted(used, key=lambda t: (-t[1], t[0]))]
-    routes_per_vehicle = [len(by_vidx.get(vidx, [])) for vidx in range(nV)]
-
-    core_routes, tail_orders, flat_orders = [], [], []
-    for vidx in priority:
-        for seq in by_vidx.get(vidx, []):
-            if not seq: continue
-            core_routes.append(list(seq))
-            num_cust = sum(1 for i in seq if not P.nodes[i].is_depot)
-            tail_vec = [1] * num_cust
-            tail_orders.append(tail_vec)
-            flat_orders.extend(tail_vec)
-
-    head = Head(priority=priority, routes_per_vehicle=routes_per_vehicle,
-                nodes_per_route=[len(r) for r in core_routes], orders_per_node=flat_orders)
-    return EncodedSolution(head=head, core_routes=core_routes, tail_orders=tail_orders)
+    # 3. Xây dựng Head - Core - Tail
+    veh_order_counts = []
+    for v_idx in range(nV):
+        total_orders = sum(len(item[1]) for route in assignments[v_idx] for item in route)
+        veh_order_counts.append((v_idx, total_orders))
+    
+    # Priority sort
+    priority = [x[0] for x in sorted(veh_order_counts, key=lambda t: (-t[1], t[0]))]
+    
+    routes_per_veh = [0] * nV
+    nodes_per_route = []
+    orders_per_node = []
+    core = []
+    tail = []
+    
+    for v_idx in priority:
+        routes = assignments[v_idx]
+        routes_per_veh[v_idx] = len(routes)
+        
+        for route in routes:
+            nodes_per_route.append(len(route))
+            for node_id, orders in route:
+                core.append(node_id)
+                orders_per_node.append(len(orders))
+                tail.extend(orders)
+                
+    head = Head(
+        priority=priority,
+        routes_per_veh=routes_per_veh,
+        nodes_per_route=nodes_per_route,
+        orders_per_node=orders_per_node
+    )
+    
+    return EncodedSolution(head, core, tail)
 
 def decode_to_solution(P: Problem, enc: EncodedSolution) -> Solution:
     routes: List[Route] = []
-    core_idx = 0
-    pri = enc.head.priority
-    rpv = enc.head.routes_per_vehicle # Số lượng route trên mỗi xe [cite: 918]
-
-    for vidx in pri:
-        veh = P.vehicles[vidx]
-        # Lấy đúng số lượng chuyến (trips) mà xe này được gán
-        num_trips = rpv[vidx] 
+    
+    ptr_core = 0
+    ptr_tail = 0
+    ptr_node_counts = 0 
+    ptr_route_counts = 0 
+    
+    for v_idx in enc.head.priority:
+        veh = P.vehicles[v_idx]
+        num_routes = enc.head.routes_per_veh[v_idx]
         
-        for _ in range(num_trips):
-            if core_idx >= len(enc.core_routes): break
-            seq_core = enc.core_routes[core_idx]
+        for _ in range(num_routes):
+            num_nodes = enc.head.nodes_per_route[ptr_route_counts]
+            ptr_route_counts += 1
             
-            # Lọc khách hàng, kẹp giữa depot của xe đó
-            customers = [x for x in seq_core if not P.nodes[x].is_depot]
-            if customers:
-                routes.append(Route(vehicle_id=veh.id, seq=[veh.depot_id] + customers + [veh.depot_id]))
-            core_idx += 1
-
-    # Các xe không chạy chuyến nào thì tạo route rỗng [0, 0]
-    used_vids = {r.vehicle_id for r in routes}
-    for v in P.vehicles:
-        if v.id not in used_vids:
-            routes.append(Route(vehicle_id=v.id, seq=[v.depot_id, v.depot_id]))
+            route_order_seq = []
             
+            for _ in range(num_nodes):
+                # node_id = enc.core[ptr_core]
+                ptr_core += 1
+                
+                num_orders = enc.head.orders_per_node[ptr_node_counts]
+                ptr_node_counts += 1
+                
+                if num_orders > 0:
+                    orders = enc.tail[ptr_tail : ptr_tail + num_orders]
+                    route_order_seq.extend(orders)
+                    ptr_tail += num_orders
+            
+            if route_order_seq:
+                routes.append(Route(vehicle_id=veh.id, seq=route_order_seq))
+                
     return Solution(routes=routes)
 
 # =========================
-#   GA (Optimized)
+#   GA (Random Valid Init)
 # =========================
 
 class GAPD_HCT_ORIGIN_Solver(Solver):
@@ -111,310 +153,213 @@ class GAPD_HCT_ORIGIN_Solver(Solver):
         self.evaluator = evaluator if evaluator is not None else evaluate
 
     def _quick_copy_enc(self, enc: EncodedSolution) -> EncodedSolution:
-        """Thay thế deepcopy bằng thủ công để tăng tốc."""
         h = enc.head
         new_head = Head(h.priority[:], h.routes_per_vehicle[:], h.nodes_per_route[:], h.orders_per_node[:])
         return EncodedSolution(new_head, [r[:] for r in enc.core_routes], [t[:] for t in enc.tail_orders])
 
-    def _decode_cost(self, enc: EncodedSolution) -> float:
-        cost, _ = self.evaluator(self.problem, decode_to_solution(self.problem, enc), return_details=False)
+    def _fitness(self, enc: EncodedSolution) -> float:
+        sol = decode_to_solution(self.problem, enc)
+        cost, _ = self.evaluator(self.problem, sol, return_details=False)
         return cost
 
-    def _fitness_from_costs(self, costs: List[float]) -> List[float]:
-        Amax, Amin = max(costs), min(costs)
-        if abs(Amax - Amin) < 1e-12: return [1.0] * len(costs)
-        return [((Amax - c) ** self.power_k) for c in costs]
-
-    # ---------- Initialization ----------
+    # ---------- Initialization (UPDATED: RANDOM VALID) ----------
 
     def _init_population(self) -> List[EncodedSolution]:
         pop = []
+        print("GA HCT: Initializing population with Random Valid Assignment...")
         for _ in range(self.pop_size):
-            s = self._build_initial_solution_randomly()
+            s = self._build_initial_solution_random_valid()
             pop.append(encode_from_solution(self.problem, s))
         return pop
 
-    def _build_initial_solution_guided(self) -> Solution:
-        P, rng = self.problem, self.rng
-        routes = []
+    def _build_initial_solution_random_valid(self) -> Solution:
+        """
+        Khởi tạo NGẪU NHIÊN nhưng HỢP LỆ (về loại hàng):
+        1. Duyệt từng đơn hàng (shuffle).
+        2. Tìm TẤT CẢ các xe có thể chở được loại hàng đó.
+        3. Chọn NGẪU NHIÊN 1 xe trong số các xe hợp lệ (bất kể depot nào).
+        """
+        P = self.problem
+        routes_map: Dict[int, List[int]] = {v.id: [] for v in P.vehicles}
+        all_vehicles = P.vehicles
         
-        # Gom khách theo depot gần nhất (Giữ nguyên logic cũ)
-        cust_by_dep = {}
-        for nid, nd in P.nodes.items():
-            if not nd.is_depot:
-                d = min(P.depots, key=lambda dep: P.d(nid, dep))
-                cust_by_dep.setdefault(d, []).append(nid)
-        
-        veh_by_dep = {}
-        for v in P.vehicles: 
-            veh_by_dep.setdefault(v.depot_id, []).append(v)
+        # 1. Lấy và xáo trộn đơn hàng
+        all_orders = list(P.orders_map.values())
+        self.rng.shuffle(all_orders)
 
-        for dep_id, custs in cust_by_dep.items():
-            vehs = veh_by_dep.get(dep_id, [])
-            if not vehs: continue
+        # 2. Gán đơn hàng
+        for order in all_orders:
+            order_types = order.contained_goods_types
             
-            # Lấy một xe đại diện để tính toán tải trọng (Giả sử xe đầu tiên)
-            capacity = vehs[0].capacity
+            # --- Tìm tất cả xe hợp lệ ---
+            valid_vehicles = [
+                v for v in all_vehicles
+                if order_types.issubset(v.allowed_goods_types)
+            ]
             
-            tmp = custs[:]
-            rng.shuffle(tmp)
+            target_vehicle = None
             
-            # Sắp xếp khách theo NN để có chuỗi logic trước khi ngắt
-            full_seq = self._nearest_neighbor_order(dep_id, tmp)
-            # Bỏ depot ở đầu và cuối chuỗi NN để lấy danh sách khách thuần túy
-            customers_only = [n for n in full_seq if not P.nodes[n].is_depot]
+            if valid_vehicles:
+                # --- CHỌN NGẪU NHIÊN TRONG SỐ XE HỢP LỆ ---
+                target_vehicle = self.rng.choice(valid_vehicles)
+            else:
+                # Fallback: Nếu không xe nào chở được, chọn đại random bất kỳ xe nào
+                target_vehicle = self.rng.choice(all_vehicles)
             
-            current_trip = []
-            current_load = 0
-            v_idx = 0 # Dùng để xoay vòng xe nếu có nhiều xe tại depot
-            
-            for cid in customers_only:
-                demand = P.nodes[cid].demand_delivery # Ước lượng theo hàng giao
-                
-                if current_load + demand > capacity and current_trip:
-                    # Nếu thêm khách này sẽ quá tải -> Đóng chuyến cũ
-                    veh_id = vehs[v_idx % len(vehs)].id
-                    routes.append(Route(vehicle_id=veh_id, seq=[dep_id] + current_trip + [dep_id]))
-                    # Reset cho chuyến mới
-                    current_trip = [cid]
-                    current_load = demand
-                    v_idx += 1 # Chuyển sang chuyến tiếp theo (có thể của xe khác hoặc cùng xe)
-                else:
-                    current_trip.append(cid)
-                    current_load += demand
-                    
-            # Thêm chuyến cuối cùng
-            if current_trip:
-                veh_id = vehs[v_idx % len(vehs)].id
-                routes.append(Route(vehicle_id=veh_id, seq=[dep_id] + current_trip + [dep_id]))
+            if target_vehicle:
+                routes_map[target_vehicle.id].append(order.id)
 
-        return Solution(routes=routes)
-
-    def _build_initial_solution_randomly(self) -> Solution:
-        P, rng = self.problem, self.rng
-        routes = []
-        
-        # 1. Lấy danh sách tất cả khách hàng
-        all_customers = [nid for nid, nd in P.nodes.items() if not nd.is_depot]
-        num_vehs = len(P.vehicles)
-        
-        # 2. Quyết định số lượng route sẽ tạo ra
-        # Giả sử mỗi xe chạy từ 1 đến 2 chuyến để đảm bảo tính đa dạng
-        num_routes_to_create = num_vehs * rng.randint(1, 2)
-        
-        # Tạo danh sách các nhóm khách hàng trống cho từng route
-        customer_groups = [[] for _ in range(num_routes_to_create)]
-        
-        # 3. PHÂN BỔ NGẪU NHIÊN: Mỗi khách hàng vào một route bất kỳ
-        for cid in all_customers:
-            target_route = rng.randrange(num_routes_to_create)
-            customer_groups[target_route].append(cid)
-            
-        # 4. Gán các nhóm khách này cho các xe (xoay vòng xe)
-        for i, group in enumerate(customer_groups):
-            if not group: 
-                continue # Bỏ qua nếu route đó ngẫu nhiên không có khách nào
-                
-            # Chọn xe theo thứ tự xoay vòng (round-robin)
-            veh = P.vehicles[i % num_vehs]
-            dep_id = veh.depot_id
-            
-            # Tạo route: [Depot của xe, ...khách ngẫu nhiên..., Depot của xe]
-            # Lưu ý: group lúc này đã chứa khách theo thứ tự ngẫu nhiên vì lấy từ vòng lặp
-            routes.append(Route(vehicle_id=veh.id, seq=[dep_id] + group + [dep_id]))
-            
-        # 5. Đảm bảo những xe không được gán khách vẫn có route rỗng [depot, depot]
-        used_vids = {r.vehicle_id for r in routes}
+        # 3. Tạo Solution
+        sol_routes = []
         for v in P.vehicles:
-            if v.id not in used_vids:
-                routes.append(Route(vehicle_id=v.id, seq=[v.depot_id, v.depot_id]))
+            seq = routes_map.get(v.id, [])
+            if seq:
+                sol_routes.append(Route(v.id, seq))
+        
+        return Solution(routes=sol_routes)
+
+    # --- CROSSOVER ---
+    def _crossover(self, parent1: EncodedSolution, parent2: EncodedSolution) -> EncodedSolution:
+        sol1 = decode_to_solution(self.problem, parent1)
+        sol2 = decode_to_solution(self.problem, parent2)
+        
+        non_empty_routes_2 = [r for r in sol2.routes if r.seq]
+        if not non_empty_routes_2:
+            return encode_from_solution(self.problem, sol1)
+            
+        r_donor = self.rng.choice(non_empty_routes_2)
+        orders_to_move = set(r_donor.seq)
+        
+        new_routes_1 = []
+        for r in sol1.routes:
+            new_seq = [oid for oid in r.seq if oid not in orders_to_move]
+            new_routes_1.append(Route(r.vehicle_id, new_seq))
+            
+        target_v_id = r_donor.vehicle_id
+        inserted = False
+        for r in new_routes_1:
+            if r.vehicle_id == target_v_id:
+                r.seq.extend(list(r_donor.seq)) 
+                inserted = True
+                break
+        
+        if not inserted:
+            new_routes_1.append(Route(target_v_id, list(r_donor.seq)))
+            
+        child_sol = Solution(new_routes_1)
+        return encode_from_solution(self.problem, child_sol)
+
+    # --- MUTATION ---
+    def _mutate(self, enc: EncodedSolution) -> EncodedSolution:
+        sol = decode_to_solution(self.problem, enc)
+        if not sol.routes: return enc
+        
+        # 1. Intra-route swap
+        if self.rng.random() < 0.5:
+            active_routes = [r for r in sol.routes if len(r.seq) >= 2]
+            if active_routes:
+                r = self.rng.choice(active_routes)
+                i, j = self.rng.sample(range(len(r.seq)), 2)
+                r.seq[i], r.seq[j] = r.seq[j], r.seq[i]
                 
-        return Solution(routes=routes)
+        # 2. Inter-route move
+        else:
+            active_routes = [r for r in sol.routes if len(r.seq) > 0]
+            all_vehicle_ids = [v.id for v in self.problem.vehicles]
+            route_map = {r.vehicle_id: r for r in sol.routes}
+            
+            if active_routes:
+                r1 = self.rng.choice(active_routes)
+                dest_v_id = self.rng.choice(all_vehicle_ids)
+                
+                if dest_v_id not in route_map:
+                    r2 = Route(dest_v_id, [])
+                    sol.routes.append(r2)
+                    route_map[dest_v_id] = r2
+                else:
+                    r2 = route_map[dest_v_id]
+                
+                if r1.seq:
+                    idx = self.rng.randrange(len(r1.seq))
+                    oid = r1.seq.pop(idx)
+                    if not r2.seq: r2.seq.append(oid)
+                    else: r2.seq.insert(self.rng.randint(0, len(r2.seq)), oid)
+                    
+        return encode_from_solution(self.problem, sol)
 
-    def _balanced_split(self, items, k):
-        parts = [[] for _ in range(k)]
-        for i, x in enumerate(items): parts[i % k].append(x)
-        return parts
-
-    def _nearest_neighbor_order(self, depot_id, customers):
-        P = self.problem
-        if not customers: return [depot_id, depot_id]
-        unvis = set(customers)
-        cur = min(unvis, key=lambda j: P.d(depot_id, j))
-        route = [depot_id, cur]
-        unvis.remove(cur)
-        while unvis:
-            nxt = min(unvis, key=lambda j: P.d(route[-1], j))
-            route.append(nxt)
-            unvis.remove(nxt)
-        route.append(depot_id)
-        return self._two_opt_light(route)
-
-    def _two_opt_light(self, seq):
-        P = self.problem
-        if len(seq) < 6: return seq[:]
-        best = seq[:]
-        for _ in range(30):
-            improved = False
-            for a in range(1, len(best) - 3):
-                for b in range(a + 1, len(best) - 1):
-                    old = P.d(best[a-1], best[a]) + P.d(best[b], best[b+1])
-                    new = P.d(best[a-1], best[b]) + P.d(best[a], best[b+1])
-                    if new < old - 1e-9:
-                        best[a:b+1] = best[a:b+1][::-1]
-                        improved = True
-            if not improved: break
-        return best
-
-    # ---------- Genetic Operators ----------
-
-    def _tournament(self, population, fitness):
-        idxs = self.rng.sample(range(len(population)), min(self.tournament_k, len(population)))
-        return population[max(idxs, key=lambda i: fitness[i])]
-
-    def _insert_segment_best(self, enc: EncodedSolution, seg_customers: List[int]) -> None:
-        """Tối ưu hóa: Sử dụng Delta Distance thay vì gọi full decode."""
-        P = self.problem
-        if not enc.core_routes or not seg_customers: return
+    def _save_final_population_details(self, population: List[EncodedSolution], filename: str = "final_pop_details.csv"):
+        import pandas as pd
+        import os
+        all_records = []
+        for i, enc in enumerate(population): 
+            sol = decode_to_solution(self.problem, enc)
+            cost, details = self.evaluator(self.problem, sol, return_details=True)
+            record = {"individual_id": i, "total_cost": cost, **details, "solution_str": str(sol)}
+            all_records.append(record)
         
-        best_delta, best_place = math.inf, (0, 1)
-        cand_routes = self.rng.sample(range(len(enc.core_routes)), min(8, len(enc.core_routes)))
-        
-        seg_dist = sum(P.d(seg_customers[i], seg_customers[i+1]) for i in range(len(seg_customers)-1))
-        f, l = seg_customers[0], seg_customers[-1]
-
-        for ridx in cand_routes:
-            route = enc.core_routes[ridx]
-            for pos in range(1, len(route)):
-                delta = P.d(route[pos-1], f) + seg_dist + P.d(l, route[pos]) - P.d(route[pos-1], route[pos])
-                if delta < best_delta:
-                    best_delta, best_place = delta, (ridx, pos)
-        
-        ridx, pos = best_place
-        enc.core_routes[ridx][pos:pos] = seg_customers # In-place insert
-        # Cập nhật tail_orders tương ứng (mỗi KH 1 order)
-        enc.tail_orders[ridx][pos-1:pos-1] = [1] * len(seg_customers)
-
-    def _repair_uniqueness(self, enc: EncodedSolution) -> None:
-        P = self.problem
-        universe = set(i for i, nd in P.nodes.items() if not nd.is_depot)
-        seen = set()
-        for ridx in range(len(enc.core_routes)):
-            new_r, new_t = [], []
-            for i, x in enumerate(enc.core_routes[ridx]):
-                if P.nodes[x].is_depot: new_r.append(x)
-                elif x not in seen:
-                    new_r.append(x); seen.add(x)
-                    if i-1 < len(enc.tail_orders[ridx]): new_t.append(enc.tail_orders[ridx][i-1])
-            if len(new_r) < 2: new_r = [enc.core_routes[ridx][0], enc.core_routes[ridx][-1]]
-            elif not P.nodes[new_r[-1]].is_depot: new_r.append(enc.core_routes[ridx][-1])
-            enc.core_routes[ridx], enc.tail_orders[ridx] = new_r, new_t
-
-        missing = list(universe - seen)
-        for c in missing:
-            best_delta, best_pos = math.inf, (0, 1)
-            for ridx, route in enumerate(enc.core_routes):
-                for pos in range(1, len(route)):
-                    d = P.d(route[pos-1], c) + P.d(c, route[pos]) - P.d(route[pos-1], route[pos])
-                    if d < best_delta: best_delta, best_pos = d, (ridx, pos)
-            r_idx, p = best_pos
-            enc.core_routes[r_idx].insert(p, c)
-            enc.tail_orders[r_idx].insert(p-1, 1)
-        _sync_head_metadata(enc)
-
-    def _crossover(self, A, B):
-        a, b = self._quick_copy_enc(A), self._quick_copy_enc(B)
-        def get_seg(enc):
-            active = [(i, r) for i, r in enumerate(enc.core_routes) if len(r) > 2]
-            if not active: return None
-            ridx, r = self.rng.choice(active)
-            custs = [x for x in r if not self.problem.nodes[x].is_depot]
-            return custs
-        
-        seg_a, seg_b = get_seg(a), get_seg(b)
-        if seg_a: self._insert_segment_best(b, seg_a)
-        if seg_b: self._insert_segment_best(a, seg_b)
-        return a, b
-
-    def _mutation(self, enc):
-        if not enc.core_routes: return
-        ridx = self.rng.randrange(len(enc.core_routes))
-        route = enc.core_routes[ridx]
-        cust_idx = [i for i, x in enumerate(route) if not self.problem.nodes[x].is_depot]
-        if len(cust_idx) < 2: return
-        i, j = sorted(self.rng.sample(cust_idx, 2))
-        route[i:j+1] = route[i:j+1][::-1]
-
-    def _mutation_move_route(self, enc):
-        rpv = enc.head.routes_per_vehicle
-        donors = [i for i, c in enumerate(rpv) if c > 0]
-        if not donors or len(rpv) < 2: return
-        v_from = self.rng.choice(donors)
-        v_to = self.rng.choice([i for i in range(len(rpv)) if i != v_from])
-        rpv[v_from] -= 1; rpv[v_to] += 1
-
-    # ---------- Main Solver ----------
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        pd.DataFrame(all_records).to_csv(filename, index=False)
 
     def solve(self, time_limit_sec: float = 60.0) -> Solution:
         t0 = time.time()
+        print("Initializing GA Population (HCT Encoding)...")
         pop = self._init_population()
-        costs = [self._decode_cost(ind) for ind in pop]
-        best_enc = self._quick_copy_enc(pop[min(range(len(pop)), key=lambda i: costs[i])])
-        best_cost = min(costs)
-
-        gen, patience = 0, 0
-        while (time.time() - t0) < time_limit_sec and gen < self.max_generations and patience < self.patience:
+        
+        fitness_vals = [self._fitness(ind) for ind in pop]
+        best_idx = min(range(len(pop)), key=lambda i: fitness_vals[i])
+        best_enc = pop[best_idx] 
+        best_cost = fitness_vals[best_idx]
+        
+        print(f"GA HCT Start. Initial Best Cost: {best_cost:.2f}")
+        
+        gen, patience_counter = 0, 0
+        
+        while (time.time() - t0) < time_limit_sec and gen < self.max_generations:
             gen += 1
-
-            fitness = self._fitness_from_costs(costs)
+            new_pop = []
             
             # Elitism
-            elite_k = max(1, int(self.elite_frac * self.pop_size))
-            elites_idx = sorted(range(len(pop)), key=lambda i: fitness[i], reverse=True)[:elite_k]
-            new_pop = [self._quick_copy_enc(pop[i]) for i in elites_idx]
-
+            elite_count = max(1, int(self.pop_size * self.elite_frac))
+            sorted_indices = sorted(range(len(pop)), key=lambda i: fitness_vals[i])
+            for i in sorted_indices[:elite_count]:
+                new_pop.append(pop[i])
+                
+            # Evolution
             while len(new_pop) < self.pop_size:
-                p1, p2 = self._tournament(pop, fitness), self._tournament(pop, fitness)
-                if self.rng.random() < self.p_cx: c1, c2 = self._crossover(p1, p2)
-                else: c1, c2 = self._quick_copy_enc(p1), self._quick_copy_enc(p2)
-
-                for c in [c1, c2]:
-                    if self.rng.random() < self.p_mut: self._mutation(c)
-                    # if self.rng.random() < self.p_route_mut: self._mutation_move_route(c)
-                    self._repair_uniqueness(c)
-                    if len(new_pop) < self.pop_size: new_pop.append(c)
-
+                p1_idx = min(self.rng.sample(range(len(pop)), self.tournament_k), key=lambda i: fitness_vals[i])
+                p2_idx = min(self.rng.sample(range(len(pop)), self.tournament_k), key=lambda i: fitness_vals[i])
+                p1, p2 = pop[p1_idx], pop[p2_idx]
+                
+                if self.rng.random() < self.p_cx:
+                    child = self._crossover(p1, p2)
+                else:
+                    child = p1 
+                
+                if self.rng.random() < self.p_mut:
+                    child = self._mutate(child)
+                    
+                new_pop.append(child)
+                
             pop = new_pop
-            costs = [self._decode_cost(ind) for ind in pop]
-            cur_min = min(costs)
-            if cur_min < best_cost - 1e-9:
-                best_cost, patience = cur_min, 0
-                best_enc = self._quick_copy_enc(pop[costs.index(cur_min)])
-            else: patience += 1
-            print(f"Gen {gen} | Best: {best_cost:.2f} | P: {patience}", end='\r')
-
-        self._save_final_population_details(pop, filename=f"last_generation/ga_tcpvrp_origin_final_pop_seed{self.seed}.csv")
+            fitness_vals = [self._fitness(ind) for ind in pop]
+            
+            curr_best_idx = min(range(len(pop)), key=lambda i: fitness_vals[i])
+            curr_best_cost = fitness_vals[curr_best_idx]
+            
+            if curr_best_cost < best_cost:
+                best_cost = curr_best_cost
+                best_enc = pop[curr_best_idx]
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                
+            if gen % 10 == 0:
+                print(f"Gen {gen}: Best Cost = {best_cost:.2f}", end='\r')
+                
+            if patience_counter >= self.patience:
+                print(f"\nStopping early at gen {gen} due to patience.")
+                break
+                
+        print(f"\nGA Finished. Best Cost: {best_cost:.2f}")
+        self._save_final_population_details(pop, filename=f"last_generation/ga_hct_final_pop_seed{self.seed}_{len(self.problem.nodes_map)}_{self.evaluator.__name__}.csv")
         return decode_to_solution(self.problem, best_enc)
-    
-    def _save_final_population_details(self, population: List[EncodedSolution], filename: str = "final_pop_details.csv"):
-        import pandas as pd
-        all_records = []        
-        for i, enc in enumerate(population):
-            # 1. Decode cá thể thành lời giải thực tế
-            sol = decode_to_solution(self.problem, enc)
-            
-            # 2. Đánh giá chi tiết (lấy toàn bộ các trường trong details)
-            cost, details = self.evaluator(self.problem, sol, return_details=True)
-            
-            # 3. Tạo bản ghi kết hợp
-            record = {
-                "individual_id": i,
-                "total_cost": cost,
-                **details, # Giải nén distance, fixed, penalty...
-                "solution_str": str(sol) # Lưu cấu trúc route để tái hiện nếu cần
-            }
-            all_records.append(record)
-        
-        # Xuất ra file CSV
-        df = pd.DataFrame(all_records)
-        df.to_csv(filename, index=False)

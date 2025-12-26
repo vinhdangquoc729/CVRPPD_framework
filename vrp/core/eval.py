@@ -1,149 +1,122 @@
-from typing import Tuple, Dict, List, Set
+from typing import Tuple, Dict, Set
 from collections import defaultdict
-from .problem import Problem, Node
+from .problem import Problem, Vehicle, Order, ORDER_TYPE_PICKUP, ORDER_TYPE_DELIVERY
 from .solution import Solution
-
 def evaluate(problem: Problem, sol: Solution, return_details=False) -> Tuple[float, dict]:
-    BIG = 1e6      # phạt lỗi logic (đường cấm, không liên tục,...)
-    BIG_CAP = 1e5  # phạt quá tải / quá giờ
-    speed = getattr(problem, "speed_units_per_min", 50.0)
-
-    cost = 0.0
+    # Trọng số phạt cho các ràng buộc cứng (Hard Constraints) không được vi phạm
+    BIG_PENALTY = 1e9 
+    
+    total_transport_cost = 0.0
     details = {
         "distance": 0.0,
-        "fixed": 0.0,
-        "tw_penalty": 0.0,
-        "cap_violations": 0,
-        "overflow_violations": 0,
-        "underload_violations": 0,
-        "overtime_routes": 0,
-        "prohibited_uses": 0,
-        "unserved_customers": 0,
-        "continuity_errors": 0, # Lỗi xe nhảy cóc từ kho này sang kho khác không hợp lệ
+        "operating_cost": 0.0,
+        "fixed_time_cost": 0.0,
+        "penalty_cost": 0.0,  # Penalty do vi phạm Time Window (pc)
+        "capacity_violations": 0,
+        "volume_violations": 0,
+        "incompatibility_violations": 0,
+        "overtime_violations": 0, # Vi phạm giới hạn thời gian chạy của xe (vr_k)
+        "unserved_orders": 0
     }
 
-    nodes = problem.nodes
-
-    # 1. Kiểm tra khách hàng được phục vụ
-    all_customers: Set[int] = {nid for nid, nd in nodes.items() if not nd.is_depot}
-    served_customers_global: Set[int] = set()
+    # 1. Kiểm tra đơn hàng chưa được phục vụ
+    all_order_ids = set(problem.orders_map.keys())
+    served_order_ids = set()
     for route in sol.routes:
-        for nid in route.seq:
-            nd = nodes[nid]
-            if not nd.is_depot:
-                served_customers_global.add(nid)
+        served_order_ids.update(route.seq)
     
-    unserved = all_customers - served_customers_global
+    unserved = all_order_ids - served_order_ids
     if unserved:
-        details["unserved_customers"] = len(unserved)
-        cost += BIG * len(unserved)
-
-    def add_leg(u: int, v: int, var_cost: float) -> float:
-        nonlocal cost
-        if (u, v) in problem.prohibited:
-            details["prohibited_uses"] += 1
-            cost += BIG
-        dist = problem.d(u, v)
-        details["distance"] += dist
-        cost += dist * var_cost
-        return dist
+        details["unserved_orders"] = len(unserved)
+        total_transport_cost += BIG_PENALTY * len(unserved)
 
     journeys = sol.journeys
 
     for veh_id, route_list in journeys.items():
-        # Tìm thông tin xe
         try:
-            veh = next(v for v in problem.vehicles if v.id == veh_id)
+            veh: Vehicle = next(v for v in problem.vehicles if v.id == veh_id)
         except StopIteration:
-            continue # Xe không tồn tại trong bài toán?
+            continue
         
-        Q = veh.capacity
-        
-        has_customer_in_journey = False
-        for r in route_list:
-            if any(not nodes[n].is_depot for n in r.seq):
-                has_customer_in_journey = True
-                break
-        
-        if has_customer_in_journey:
-            details["fixed"] += veh.fixed_cost
-            cost += veh.fixed_cost
+        # Nếu xe có thực hiện hành trình, cộng chi phí cố định (Time-based cost tc_k) 
+        is_vehicle_used = any(r.seq for r in route_list)
+        if is_vehicle_used:
+            details["fixed_time_cost"] += veh.fixed_cost
+            total_transport_cost += veh.fixed_cost
 
         current_time = veh.start_time
+        current_loc_node = veh.start_depot_id 
+        journey_distance = 0.0
+        start_time_of_journey = veh.start_time
         
-        # Vị trí hiện tại của xe (bắt đầu từ depot của xe)
-        current_loc = veh.depot_id 
-
-        for r_idx, route in enumerate(route_list):
-            seq = list(route.seq)
+        for route in route_list:
+            if not route.seq: continue
             
-            if not seq: 
-                continue # Route rỗng
-
-            # Kiểm tra và thêm depot đầu/cuối nếu thiếu
-            if not nodes[seq[0]].is_depot:
-                seq = [current_loc] + seq
-            if not nodes[seq[-1]].is_depot:
-                seq = seq + [veh.depot_id]
-
-            if seq[0] != current_loc:
-                details["continuity_errors"] += 1
-                cost += BIG # Phạt nặng lỗi logic
-                dist_deadhead = add_leg(current_loc, seq[0], veh.var_cost_per_dist)
-                current_time += dist_deadhead / speed
-
-            # Reset tải cho chuyến mới (Mỗi route là 1 chuyến nạp hàng mới)
-            load_deliv = 0 
-            load_pick = 0
+            # Kiểm tra tải trọng và thể tích đơn hàng trên route [cite: 253, 268]
+            route_weight = sum(problem.orders_map[oid].weight for oid in route.seq)
+            route_volume = sum(problem.orders_map[oid].capacity for oid in route.seq)
             
-            # Tính toán nhu cầu giao hàng cho chuyến này
-            route_customers = [nid for nid in seq if not nodes[nid].is_depot]
-            total_delivery_demand = sum(nodes[nid].demand_delivery for nid in route_customers)
+            if route_weight > veh.max_load_weight:
+                details["capacity_violations"] += 1
+                total_transport_cost += BIG_PENALTY
             
-            load_deliv = min(Q, total_delivery_demand)
+            if route_volume > veh.max_capacity:
+                details["volume_violations"] += 1
+                total_transport_cost += BIG_PENALTY
 
-            for i in range(len(seq) - 1):
-                u, v = seq[i], seq[i+1]
-                node_v = nodes[v]
+            # Duyệt qua các điểm trong route
+            for oid in route.seq:
+                order = problem.orders_map[oid]
+                node = problem.nodes_map[order.node_id]
 
-                current_time += add_leg(u, v, veh.var_cost_per_dist) / speed
-
-                if node_v.is_depot:
-                    load_pick = 0
-                    current_time += node_v.service_time
-                    continue
-
-                # Xử lý tại điểm khách
-                load_deliv -= node_v.demand_delivery
-                if load_deliv < 0:
-                    details["cap_violations"] += 1
-                    details["underload_violations"] += 1
-                    cost += BIG_CAP
-                    load_deliv = 0
+                # Tính chi phí vận hành (Operating cost oc_k) dựa trên quãng đường [cite: 224, 27]
+                dist = problem.get_dist_node_to_node(current_loc_node, node.id)
+                travel_time = problem.get_time_node_to_node(current_loc_node, node.id)
                 
-                load_pick += node_v.demand_pickup
+                journey_distance += dist
+                current_time += travel_time
                 
-                if load_deliv + load_pick > Q:
-                    details["cap_violations"] += 1
-                    details["overflow_violations"] += 1
-                    cost += BIG_CAP
-                    overflow = (load_deliv + load_pick) - Q
-                    load_pick = max(0, load_pick - overflow)
+                op_cost = dist * veh.average_fee_transport
+                details["operating_cost"] += op_cost
+                total_transport_cost += op_cost
 
-                if (node_v.tw_open is not None) and (current_time < node_v.tw_open):
-                    current_time = node_v.tw_open
+                # Kiểm tra vi phạm Time Window và tính Penalty Cost (pc) 
+                # Công thức: pc = pc_k * delta_t
+                if current_time > order.delivery_before_time:
+                    delay_seconds = current_time - order.delivery_before_time
+                    delay_minutes = delay_seconds / 60.0
+                    # Theo báo: penalty_cost thường tính theo phút (VD: 1500 VND/phút) 
+                    tw_penalty = delay_minutes * problem.tw_penalty_weight
+                    details["penalty_cost"] += tw_penalty
+                    total_transport_cost += tw_penalty
                 
-                if (node_v.tw_close is not None) and (current_time > node_v.tw_close):
-                    late = current_time - node_v.tw_close
-                    details["tw_penalty"] += late * problem.tw_penalty_per_min
-                    cost += late * problem.tw_penalty_per_min
+                # Nếu đến sớm hơn ES, xe phải chờ (không tính penalty nhưng tăng current_time) [cite: 177]
+                if current_time < order.delivery_after_time:
+                    current_time = order.delivery_after_time
 
-                current_time += node_v.service_time
+                # Cộng thời gian phục vụ (sd_i) [cite: 189, 206]
+                current_time += order.service_duration
+                current_loc_node = node.id
 
-            current_loc = seq[-1]
+            # Quay về Depot sau mỗi route [cite: 201]
+            dist_to_depot = problem.get_dist_node_to_node(current_loc_node, veh.end_depot_id)
+            time_to_depot = problem.get_time_node_to_node(current_loc_node, veh.end_depot_id)
+            
+            journey_distance += dist_to_depot
+            current_time += time_to_depot
+            
+            op_cost_return = dist_to_depot * veh.average_fee_transport
+            details["operating_cost"] += op_cost_return
+            total_transport_cost += op_cost_return
+            current_loc_node = veh.end_depot_id
 
-        if current_time > veh.end_time:
-            details["overtime_routes"] += 1
-            cost += BIG_CAP
+        # Kiểm tra giới hạn thời gian chạy trong ngày của xe (vr_k) [cite: 155, 260]
+        total_travel_time = current_time - start_time_of_journey
+        if total_travel_time > veh.start_time + 28800: # Ví dụ 8 tiếng như trong báo [cite: 439]
+            # Lưu ý: veh.vr_k nên được lấy từ problem model
+            details["overtime_violations"] += 1
+            total_transport_cost += BIG_PENALTY
+            
+        details["distance"] += journey_distance
 
-    return (cost, details) if return_details else (cost, {})
+    return (total_transport_cost, details) if return_details else (total_transport_cost, {})

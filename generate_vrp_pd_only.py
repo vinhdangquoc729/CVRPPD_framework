@@ -1,24 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-generate_vrp_pd_only.py — VRP datasets (Osaba-like) with PD exclusivity & paired PD for expansions.
+generate_vrp_pd_only.py
 
-- Base (single depot/vehicle) giữ nguyên số liệu gốc (không paired).
-- BẢN MỞ RỘNG base_mdmv_tw_modified (PAIRED) **không sinh toạ độ mới**:
-  dùng toạ độ gốc của file XML, depot cũng chọn từ các điểm gốc.
-  Bảo đảm số khách chẵn để ghép pickup–delivery.
-- Synthetic (PAIRED) có thể sinh mới như trước.
-
-Usage:
-  python generate_vrp_pd_only.py --in Osaba_50_1_1.xml --out out_dir --expand-base
-  python generate_vrp_pd_only.py --in Osaba_50_1_1.xml --out out_dir --expand-base \
-      --synth-sizes 200 500 1000 --del-mult-from-original 3.0 --pd-target-ratio 0.95 --lock-both-totals
+FIXES:
+1. Vehicles: Cập nhật allowed_goods_types tuân thủ nghiêm ngặt quy tắc "Không chở 1 & 4 đồng thời".
+   Tập hợp lựa chọn: [1,2,3], [2,3,4], [2,3], [1,2], [1,3], [2,4], [3,4].
 """
 from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime
+import random
+from datetime import datetime, timezone
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import hashlib
@@ -27,28 +21,18 @@ import numpy as np
 import pandas as pd
 
 
-# ------------------------ Args ------------------------
 def parse_args():
-    p = argparse.ArgumentParser(description="Generate VRP datasets (Osaba-like) with PD constraints.")
-    p.add_argument("--in", dest="in_xml", required=True, help="Input Osaba XML path OR folder containing *.xml")
-    p.add_argument("--out", dest="out_dir", required=True, help="Output directory")
+    p = argparse.ArgumentParser(description="Generate VRP datasets.")
+    p.add_argument("--in", dest="in_xml", required=True)
+    p.add_argument("--out", dest="out_dir", required=True)
 
-    # Legacy PD-only (XOR) params (cho synthesize_instance_pd nếu cần)
-    p.add_argument("--pd-target-ratio", type=float, default=0.95,
-                   help="Target ratio: sum(delivery_new) ≈ ratio * sum(pickup_new). Default 0.95")
-    p.add_argument("--pd-pickup-share", type=float, default=0.55,
-                   help="Approx share of pickup-only customers initially. Default 0.55")
-    p.add_argument("--pd-min-amount", type=int, default=1,
-                   help="Minimum nonzero demand after scaling/rounding. Default 1")
-
-    p.add_argument("--del-mult-from-original", type=float, default=2.0,
-                   help="sum(delivery_new) = k * sum(delivery_original) (customers only). Default 2.0")
-
-    p.add_argument("--lock-both-totals", action="store_true", default=False,
-                   help="If set, scale quantities so sum(del_new)=k*sum(del_orig); pickup synced so totals match.")
-
-    p.add_argument("--expand-base", action="store_true",
-                   help="Create multi-depot, multi-vehicle, time-window expansion for the base XML")
+    # Legacy params
+    p.add_argument("--pd-target-ratio", type=float, default=0.95)
+    p.add_argument("--pd-pickup-share", type=float, default=0.55)
+    p.add_argument("--pd-min-amount", type=int, default=1)
+    p.add_argument("--del-mult-from-original", type=float, default=2.0)
+    p.add_argument("--lock-both-totals", action="store_true", default=False)
+    p.add_argument("--expand-base", action="store_true")
 
     # Depots/vehicles/TW
     p.add_argument("--depots-extra-min", type=int, default=2)
@@ -61,8 +45,7 @@ def parse_args():
     p.add_argument("--veh-capacities", type=int, nargs="+", default=[80, 100, 120])
     p.add_argument("--veh-start", type=int, default=7*60)
     p.add_argument("--veh-end", type=int, default=20*60)
-    p.add_argument("--veh-fixed-cost", type=float, default=100.0,
-                   help="[IGNORED] Fixed cost is automatically computed as 100 * capacity.")
+    p.add_argument("--veh-fixed-cost", type=float, default=100.0)
     p.add_argument("--veh-var-cost", type=float, default=1.0)
 
     p.add_argument("--service-min", type=int, default=5)
@@ -80,9 +63,7 @@ def parse_args():
     p.add_argument("--synth-clusters-min", type=int, default=20)
     p.add_argument("--synth-clusters-max", type=int, default=50)
     p.add_argument("--synth-area-jitter", type=float, default=1200.0)
-
-    p.add_argument("--keep-prohibited-arcs", action="store_true",
-                   help="If set, copy original prohibited arcs into expanded/synthetic instances.")
+    p.add_argument("--keep-prohibited-arcs", action="store_true")
 
     # Quantity distributions
     p.add_argument("--dem-delivery-candidates", type=int, nargs="+", default=[5, 10, 15, 20])
@@ -95,10 +76,10 @@ def parse_args():
 
 
 # ------------------------ Helpers ------------------------
-def assign_time_windows(n_customers, open_range, close_range, min_width):
-    """Gán time window cho các điểm khách."""
-    opens = np.random.randint(open_range[0], open_range[1] + 1, size=n_customers)
-    closes = np.random.randint(close_range[0], close_range[1] + 1, size=n_customers)
+def assign_time_windows(n_customers, open_range, close_range, min_width, rng=None):
+    if rng is None: rng = np.random
+    opens = rng.randint(open_range[0], open_range[1] + 1, size=n_customers)
+    closes = rng.randint(close_range[0], close_range[1] + 1, size=n_customers)
     open_final = np.minimum(opens, closes - min_width)
     close_final = np.maximum(closes, open_final + min_width)
     open_final = np.clip(open_final, 0, 1440 - 1)
@@ -107,7 +88,6 @@ def assign_time_windows(n_customers, open_range, close_range, min_width):
 
 
 def choose_depots(coords, k):
-    """Chọn k điểm làm depot dựa trên farthest-first."""
     N = coords.shape[0]
     first = np.random.randint(0, N)
     chosen = [first]
@@ -120,13 +100,34 @@ def choose_depots(coords, k):
 
 
 def gen_vehicle_table(depot_ids, per_depot_min, per_depot_max, cap_choices,
-                      start_min, end_max, var_cost, multiple_fixed_cost=100.0):
-    """fixed_cost = 100 * capacity."""
+                      start_min, end_max, var_cost, multiple_fixed_cost=100.0, rng=None):
+    """
+    Sinh bảng xe với cột allowed_goods_types.
+    """
+    if rng is None: rng = np.random.RandomState(42)
+    
     rows, vid = [], 0
+    
+    # CÁC COMBO HÀNG HÓA HỢP LỆ (Không bao giờ chứa đồng thời 1 và 4)
+    allowed_options = [
+        [1, 2, 3],
+        [2, 3, 4],
+        [2, 3],
+        [1, 2],
+        [1, 3],
+        [2, 4],
+        [3, 4]
+    ]
+    
     for d in depot_ids:
-        nveh = np.random.randint(per_depot_min, per_depot_max + 1)
+        nveh = rng.randint(per_depot_min, per_depot_max + 1)
         for _ in range(nveh):
-            cap = int(np.random.choice(cap_choices))
+            cap = int(rng.choice(cap_choices))
+            
+            # Chọn ngẫu nhiên loại hàng cho phép
+            opt_idx = rng.randint(0, len(allowed_options))
+            allowed_goods = allowed_options[opt_idx]
+            
             rows.append({
                 "vehicle_id": vid,
                 "depot_id": d,
@@ -134,26 +135,39 @@ def gen_vehicle_table(depot_ids, per_depot_min, per_depot_max, cap_choices,
                 "start_time": start_min,
                 "end_time": end_max,
                 "fixed_cost": float(multiple_fixed_cost * cap),
-                "variable_cost_per_distance": var_cost
+                "variable_cost_per_distance": var_cost,
+                "allowed_goods_types": json.dumps(allowed_goods)
             })
             vid += 1
     return pd.DataFrame(rows)
 
 
-def with_service_and_tw(df, service_range, tw, tw_open_range, tw_close_range, tw_min_width):
+def with_service_and_tw(df, service_range, tw, tw_open_range, tw_close_range, tw_min_width, rng=None):
+    """Gán Service Time và Time Window cho các Node không phải Depot."""
+    if rng is None: rng = np.random.RandomState(42)
+    
     out = df.copy()
     if "is_depot" not in out.columns:
         out["is_depot"] = False
+        
     out["service_time"] = 0
     cust_mask = ~out["is_depot"]
-    out.loc[cust_mask, "service_time"] = np.random.randint(service_range[0], service_range[1] + 1, cust_mask.sum())
-    if tw:
-        open_min, close_min = assign_time_windows(cust_mask.sum(), tw_open_range, tw_close_range, tw_min_width)
-        out.loc[cust_mask, "tw_open"] = open_min
-        out.loc[cust_mask, "tw_close"] = close_min
-    else:
-        out["tw_open"] = np.nan
-        out["tw_close"] = np.nan
+    
+    if cust_mask.sum() > 0:
+        out.loc[cust_mask, "service_time"] = rng.randint(service_range[0], service_range[1] + 1, cust_mask.sum())
+        
+        if tw:
+            open_min, close_min = assign_time_windows(cust_mask.sum(), tw_open_range, tw_close_range, tw_min_width, rng=rng)
+            out.loc[cust_mask, "tw_open"] = open_min
+            out.loc[cust_mask, "tw_close"] = close_min
+        else:
+            out["tw_open"] = np.nan
+            out["tw_close"] = np.nan
+            
+    # Đảm bảo depot luôn mở full ngày
+    out.loc[out["is_depot"], "tw_open"] = 0
+    out.loc[out["is_depot"], "tw_close"] = 1439
+    
     return out
 
 
@@ -175,10 +189,125 @@ def _sample_order_sizes(rng, n_orders, candidates, probs, min_amount):
     return q
 
 
+# ------------------------ Goods & Order Logic ------------------------
+
+def _split_integer(value: int, parts: int, rng: np.random.RandomState) -> list[int]:
+    if parts <= 1:
+        return [value]
+    if value < parts: 
+        res = [0] * parts
+        for i in range(value): res[i] = 1
+        return res
+    
+    points = sorted(rng.choice(range(1, value), parts - 1, replace=False))
+    result = []
+    prev = 0
+    for p in points:
+        result.append(p - prev)
+        prev = p
+    result.append(value - prev)
+    return result
+
+def _generate_goods_for_order(total_weight: int, rng: np.random.RandomState) -> list[dict]:
+    if total_weight <= 0:
+        return []
+    
+    num_items = rng.randint(1, 4) 
+    weights = _split_integer(total_weight, num_items, rng)
+    
+    items = []
+    # 0: none, 1: forbid 4, 4: forbid 1
+    forbidden = None 
+    available_types = [1, 2, 3, 4]
+    
+    for w in weights:
+        if w <= 0: continue
+        current_choices = list(available_types)
+        if forbidden == 1 and 4 in current_choices:
+            current_choices.remove(4)
+        if forbidden == 4 and 1 in current_choices:
+            current_choices.remove(1)
+            
+        g_type = rng.choice(current_choices)
+        if g_type == 1: forbidden = 1
+        if g_type == 4: forbidden = 4
+        
+        items.append({"goods_type": int(g_type), "weight": int(w)})
+        
+    return items
+
+def _generate_complex_orders_for_base(nodes_df_with_demand: pd.DataFrame, depot_ids: list, rng: np.random.RandomState) -> pd.DataFrame:
+    # Filter out DEPOTS from customers
+    customers = nodes_df_with_demand[~nodes_df_with_demand["id"].isin(depot_ids)].copy()
+    
+    n_cust = len(customers)
+    n_1 = int(0.5 * n_cust)
+    n_2 = int(0.3 * n_cust)
+    n_3 = n_cust - n_1 - n_2
+    
+    counts = [1]*n_1 + [2]*n_2 + [3]*n_3
+    # Check if mismatch due to rounding
+    if len(counts) < n_cust:
+        counts.extend([1] * (n_cust - len(counts)))
+    elif len(counts) > n_cust:
+        counts = counts[:n_cust]
+        
+    rng.shuffle(counts)
+    
+    orders_data = []
+    order_id_counter = 0
+    
+    for idx, (i, row) in enumerate(customers.iterrows()):
+        node_id = int(row["id"])
+        dem_del = int(row["demand_delivery"])
+        dem_pick = int(row["demand_pickup"])
+        
+        target_n_orders = counts[idx]
+        min_orders_needed = (1 if dem_del > 0 else 0) + (1 if dem_pick > 0 else 0)
+        n_orders = max(target_n_orders, min_orders_needed)
+        
+        slots = [] 
+        
+        # Distribute Delivery
+        if dem_del > 0:
+            if dem_pick == 0:
+                parts = _split_integer(dem_del, n_orders, rng)
+                for p in parts: slots.append({"type": 0, "amount": p})
+            else:
+                n_del_slots = 1
+                if n_orders > 2:
+                    n_del_slots = rng.randint(1, n_orders)
+                parts = _split_integer(dem_del, n_del_slots, rng)
+                for p in parts: slots.append({"type": 0, "amount": p})
+
+        # Distribute Pickup
+        if dem_pick > 0:
+            if dem_del == 0:
+                parts = _split_integer(dem_pick, n_orders, rng)
+                for p in parts: slots.append({"type": 1, "amount": p})
+            else:
+                n_pick_slots = n_orders - len(slots)
+                if n_pick_slots < 1: n_pick_slots = 1
+                parts = _split_integer(dem_pick, n_pick_slots, rng)
+                for p in parts: slots.append({"type": 1, "amount": p})
+                
+        for slot in slots:
+            goods = _generate_goods_for_order(slot["amount"], rng)
+            orders_data.append({
+                "order_id": order_id_counter,
+                "node_id": node_id,
+                "order_type": slot["type"], 
+                "quantity": slot["amount"],
+                "goods": json.dumps(goods)
+            })
+            order_id_counter += 1
+            
+    return pd.DataFrame(orders_data)
+
+
+# ------------------------ Node Building Helpers ------------------------
+
 def _build_pd_nodes_shuffled(rng, order_sizes, cluster_centers, area_jitter, start_node_id):
-    """
-    (Dùng cho synthetic) Tạo 2 node (P,D) cho mỗi đơn, rồi TRỘN trước khi gán id.
-    """
     K = len(cluster_centers)
     tmp_nodes = []
     for oid, qty in enumerate(order_sizes):
@@ -205,7 +334,6 @@ def _build_pd_nodes_shuffled(rng, order_sizes, cluster_centers, area_jitter, sta
             "x": dx, "y": dy, "is_depot": False,
         })
 
-    # shuffle & assign ids
     perm = rng.permutation(len(tmp_nodes))
     tmp_nodes = [tmp_nodes[i] for i in perm]
 
@@ -231,10 +359,6 @@ def _build_pd_nodes_shuffled(rng, order_sizes, cluster_centers, area_jitter, sta
 
 def _ensure_pd_order_tw(nodes_df: pd.DataFrame, orders_df: pd.DataFrame,
                         travel_speed_units_per_min: float, tw_min_width: int) -> pd.DataFrame:
-    """
-    Nắn TW: tw_open(delivery) >= tw_open(pickup) + service_pickup + travel_min.
-    Nếu cần, nới tw_close(delivery) để đảm bảo width.
-    """
     df = nodes_df.set_index("id").copy()
     for _, r in orders_df.iterrows():
         pid, did = int(r["pickup_node_id"]), int(r["delivery_node_id"])
@@ -282,257 +406,15 @@ def load_osaba_xml(xml_path: Path):
     return nodes_df, prohib_df
 
 
-# ------------------------ Legacy PD-only (XOR) synthesizer (giữ để dùng khi cần) ------------------------
-def _apply_pd_exclusive_and_ratio_on_customers(
-    df: pd.DataFrame,
-    *, rng: np.random.RandomState,
-    pickup_share: float,
-    target_ratio: float,
-    min_amount: int,
-    deliv_candidates=None, deliv_probs=None,
-    pick_candidates=None, pick_probs=None
-) -> pd.DataFrame:
-    out = df.copy()
-    cust = out[~out["is_depot"]].copy()
-    n = len(cust)
-    if n == 0:
-        return out
-
-    roles = rng.rand(n) < pickup_share  # True: pickup-only
-    cust["is_pickup_only"] = roles
-
-    if (deliv_candidates is not None) and (deliv_probs is not None) and \
-       (pick_candidates is not None) and (pick_probs is not None):
-        cust["demand_delivery"] = 0
-        cust["demand_pickup"] = 0
-        dmask = ~cust["is_pickup_only"]
-        if dmask.any():
-            cust.loc[dmask, "demand_delivery"] = rng.choice(deliv_candidates, size=dmask.sum(), p=deliv_probs)
-        pmask = cust["is_pickup_only"]
-        if pmask.any():
-            cust.loc[pmask, "demand_pickup"] = rng.choice(pick_candidates, size=pmask.sum(), p=pick_probs)
-    else:
-        pmask = roles; dmask = ~roles
-        cust.loc[pmask, "demand_delivery"] = 0
-        cust.loc[dmask, "demand_pickup"] = 0
-        zero_both = (cust["demand_delivery"] <= 0) & (cust["demand_pickup"] <= 0)
-        if zero_both.any():
-            flip = rng.rand(zero_both.sum()) < pickup_share
-            pick_idx = zero_both[zero_both].index[flip]
-            del_idx  = zero_both[zero_both].index[~flip]
-            cust.loc[pick_idx, "demand_pickup"] = max(min_amount, 1)
-            cust.loc[del_idx,  "demand_delivery"] = max(min_amount, 1)
-
-    sum_pick = float(cust["demand_pickup"].sum())
-    sum_del  = float(cust["demand_delivery"].sum())
-    if sum_del <= 0 and (~cust["is_pickup_only"]).any():
-        cust.loc[~cust["is_pickup_only"], "demand_delivery"] = min_amount
-        sum_del = float(cust["demand_delivery"].sum())
-    if sum_pick <= 0 and (cust["is_pickup_only"]).any():
-        cust.loc[cust["is_pickup_only"], "demand_pickup"] = min_amount
-        sum_pick = float(cust["demand_pickup"].sum())
-
-    if sum_del > 0 and sum_pick > 0:
-        scale = (target_ratio * sum_pick) / sum_del
-        del_vals = (cust["demand_delivery"].astype(float) * scale).round().astype(int)
-        dmask = (~cust["is_pickup_only"]) & (del_vals <= 0)
-        del_vals.loc[dmask] = min_amount
-        cust["demand_delivery"] = del_vals
-
-    cust = cust.drop(columns=["is_pickup_only"])
-    out.loc[~out["is_depot"], ["demand_delivery", "demand_pickup"]] = cust[["demand_delivery", "demand_pickup"]].values
-    return out
-
-
-def _enforce_total_pickup(full_nodes: pd.DataFrame, pickup_target: float, min_amount: int) -> pd.DataFrame:
-    out = full_nodes.copy()
-    cust = out[~out["is_depot"]].copy()
-    cur = float(cust["demand_pickup"].sum())
-    if pickup_target is None or pickup_target <= 0 or cur <= 0:
-        return out
-    s = pickup_target / cur
-    new_vals = (cust["demand_pickup"].astype(float) * s).round().astype(int)
-    must_pos = (cust["demand_pickup"] > 0) & (new_vals <= 0)
-    if must_pos.any():
-        new_vals.loc[must_pos] = min_amount
-    cust["demand_pickup"] = new_vals
-
-    diff = int(round(pickup_target)) - int(cust["demand_pickup"].sum())
-    if diff != 0:
-        pos_idx = cust.index[cust["demand_pickup"] > 0].tolist()
-        if pos_idx:
-            step = 1 if diff > 0 else -1
-            k = 0
-            while diff != 0 and k < 100000:
-                j = pos_idx[k % len(pos_idx)]
-                if step < 0 and cust.at[j, "demand_pickup"] <= min_amount:
-                    k += 1; continue
-                cust.at[j, "demand_pickup"] += step
-                diff -= step; k += 1
-
-    out.loc[cust.index, "demand_pickup"] = cust["demand_pickup"]
-    return out
-
-
-def _enforce_total_delivery(full_nodes: pd.DataFrame, target_total: float, min_amount: int) -> pd.DataFrame:
-    out = full_nodes.copy()
-    cust = out[~out["is_depot"]].copy()
-    if target_total is None or target_total <= 0:
-        return out
-    cur_sum = float(cust["demand_delivery"].sum())
-    if cur_sum <= 0:
-        m = max(1, int(0.1 * len(cust)))
-        idx = cust.sample(n=m, random_state=0).index
-        cust.loc[idx, "demand_delivery"] = min_amount
-        cur_sum = float(cust["demand_delivery"].sum())
-
-    s = target_total / cur_sum
-    new_vals = (cust["demand_delivery"].astype(float) * s).round().astype(int)
-    must_pos = (cust["demand_delivery"] > 0) & (new_vals <= 0)
-    if must_pos.any():
-        new_vals.loc[must_pos] = min_amount
-    cust["demand_delivery"] = new_vals
-
-    diff = int(round(target_total)) - int(cust["demand_delivery"].sum())
-    if diff != 0:
-        pos_idx = cust.index[cust["demand_delivery"] > 0].tolist()
-        if pos_idx:
-            step = 1 if diff > 0 else -1
-            k = 0
-            while diff != 0 and k < 100000:
-                j = pos_idx[k % len(pos_idx)]
-                if step < 0 and cust.at[j, "demand_delivery"] <= min_amount:
-                    k += 1; continue
-                cust.at[j, "demand_delivery"] += step
-                diff -= step; k += 1
-
-    out.loc[cust.index, "demand_delivery"] = cust["demand_delivery"]
-    return out
-
-
-def synthesize_instance_pd(
-    nodes_df_base: pd.DataFrame,
-    n_customers_target: int,
-    n_clusters_min: int, n_clusters_max: int,
-    area_jitter: float,
-    depots_min: int, depots_max: int,
-    service_range,
-    tw_enabled: bool, tw_open_range, tw_close_range, tw_min_width: int,
-    cap_choices,
-    veh_start: int, veh_end: int, veh_var_cost: float,
-    veh_per_depot_min: int, veh_per_depot_max: int,
-    dem_deliv_candidates, dem_deliv_probs,
-    dem_pick_candidates, dem_pick_probs,
-    tw_penalty_per_min: float,
-    pd_target_ratio: float,
-    pd_pickup_share: float,
-    pd_min_amount: int,
-    rng: np.random.RandomState
-):
-    # Synthetic PD-only (XOR) — giữ nguyên như trước
-    base = nodes_df_base[nodes_df_base["id"] != 0].copy()
-    centers = base.groupby("cluster")[["x", "y"]].mean().reset_index()
-    base_centers = centers[["x", "y"]].to_numpy()
-
-    n_clusters = int(np.clip(np.random.randint(n_clusters_min, n_clusters_max + 1), n_clusters_min, n_clusters_max))
-    chosen = rng.choice(len(base_centers), size=n_clusters, replace=True)
-    cluster_centers = base_centers[chosen]
-
-    proportions = rng.dirichlet(np.ones(n_clusters))
-    cust_per_cluster = np.maximum((proportions * n_customers_target).astype(int), 1)
-    diff = n_customers_target - cust_per_cluster.sum()
-    if diff > 0: cust_per_cluster[:diff] += 1
-    elif diff < 0: cust_per_cluster[:(-diff)] -= 1
-
-    xs, ys, clusters_out, cid = [], [], [], 1
-    for c_idx, cnt in enumerate(cust_per_cluster):
-        cx, cy = cluster_centers[c_idx]
-        x = rng.normal(loc=cx, scale=area_jitter, size=cnt)
-        y = rng.normal(loc=cy, scale=area_jitter, size=cnt)
-        xs.append(x); ys.append(y)
-        clusters_out.extend([cid] * cnt); cid += 1
-    xs = np.concatenate(xs); ys = np.concatenate(ys)
-
-    coords = np.stack([xs, ys], axis=1)
-    k_depots = int(np.random.randint(depots_min, depots_max + 1))
-    depot_indices = choose_depots(coords, k_depots)
-
-    depot_rows = []
-    for i, idx in enumerate(depot_indices):
-        depot_rows.append({
-            "id": i, "addr": f"DEPOT.{i}", "cluster": 0,
-            "demand_delivery": 0, "demand_pickup": 0,
-            "x": float(coords[idx, 0]), "y": float(coords[idx, 1]),
-            "is_depot": True
-        })
-
-    start_id = len(depot_rows)
-    customers = [{
-        "id": start_id + i, "addr": f"C.{i+1}",
-        "cluster": int(clusters_out[i]),
-        "demand_delivery": 0, "demand_pickup": 0,
-        "x": float(xs[i]), "y": float(ys[i]), "is_depot": False
-    } for i in range(n_customers_target)]
-    full_nodes = pd.DataFrame(depot_rows + customers)
-
-    full_nodes = with_service_and_tw(
-        full_nodes, service_range=service_range, tw=tw_enabled,
-        tw_open_range=tw_open_range, tw_close_range=tw_close_range, tw_min_width=tw_min_width
-    )
-
-    full_nodes = _apply_pd_exclusive_and_ratio_on_customers(
-        full_nodes, rng=rng,
-        pickup_share=pd_pickup_share, target_ratio=pd_target_ratio, min_amount=pd_min_amount,
-        deliv_candidates=np.asarray(dem_deliv_candidates, dtype=int),
-        deliv_probs=np.asarray(dem_deliv_probs, dtype=float),
-        pick_candidates=np.asarray(dem_pickup_candidates, dtype=int),
-        pick_probs=np.asarray(dem_pickup_probs, dtype=float),
-    )
-
-    depot_ids = full_nodes[full_nodes["is_depot"]]["id"].tolist()
-    veh_df = gen_vehicle_table(
-        depot_ids=depot_ids, per_depot_min=veh_per_depot_min, per_depot_max=veh_per_depot_max,
-        cap_choices=cap_choices, start_min=veh_start, end_max=veh_end,
-        var_cost=veh_var_cost
-    )
-
-    prohib_syn = pd.DataFrame(columns=["from_id", "to_id"])
-    meta = {
-        "source": "synthetic_from_Osaba_like_PD_only",
-        "created_at": datetime.utcnow().isoformat() + "Z",
-        "n_customers": int(n_customers_target),
-        "n_depots": int(len(depot_ids)),
-        "n_vehicles": int(len(veh_df)),
-        "type": "multi_depot_multi_vehicle_with_time_windows" if tw_enabled else "multi_depot_multi_vehicle",
-        "time_window_units": "minutes_from_midnight",
-        "tw_penalty_per_min": float(tw_penalty_per_min),
-        "service_time_units": "minutes",
-        "travel_speed_units_per_min": 60.0,
-        "distance_units": "euclidean (coordinate units)",
-        "clusters": int(len(np.unique(full_nodes.loc[~full_nodes['is_depot'], 'cluster']))),
-        "pd_only": True,
-        "pd_target_ratio": float(pd_target_ratio)
-    }
-    return full_nodes, veh_df, prohib_syn, meta
-
-
-# ------------------------ Paired PD synthesizer (EXPANSION from ORIGINAL NODES) ------------------------
+# ------------------------ Paired PD Logic ------------------------
 def _pick_k_depots_parity(coords: np.ndarray, k_min: int, k_max: int, n_customers_total: int, rng: np.random.RandomState) -> int:
-    """
-    Chọn số depot k in [k_min, k_max] sao cho (n_customers_total - k) là số chẵn.
-    Ưu tiên k gần giữa dải, nếu không có thì fallback về k_min/k_max.
-    """
-    # ứng viên theo độ gần trung bình
     candidates = list(range(k_min, k_max + 1))
-    # sắp xếp theo |k - mid|
     mid = 0.5 * (k_min + k_max)
     candidates.sort(key=lambda k: abs(k - mid))
     for k in candidates:
         if (n_customers_total - k) >= 2 and ((n_customers_total - k) % 2 == 0):
             return k
-    # nếu không có k thoả, trả về ứng viên gần nhất rồi sau đó sẽ drop 1 khách (rất hiếm)
     return int(round(mid))
-
 
 def synthesize_instance_pd_paired_from_original_nodes(
     nodes_df_base: pd.DataFrame,
@@ -547,98 +429,51 @@ def synthesize_instance_pd_paired_from_original_nodes(
     rng: np.random.RandomState,
     travel_speed_units_per_min: float = 60.0,
 ):
-    """
-    Tạo instance PAIR từ các điểm GỐC:
-    - Chọn depot từ các điểm gốc (id != 0) bằng farthest-first.
-    - KHÁCH = phần còn lại sau khi lấy depot. Bảo đảm số khách chẵn (ưu tiên chỉnh k; nếu vẫn lẻ thì bỏ 1 khách).
-    - Ghép 2*M khách thành M đơn: 1 pickup, 1 delivery (quantity bốc từ phân phối).
-    - Không sinh toạ độ mới.
-    """
     base = nodes_df_base[nodes_df_base["id"] != 0].copy().reset_index(drop=True)
     all_coords = base[["x", "y"]].to_numpy()
     n_total = len(base)
-    if n_total < 2:
-        raise ValueError("Not enough original customers to create paired PD instance.")
-
-    # chọn k_depots sao cho số khách còn lại chẵn
     k_depots = _pick_k_depots_parity(all_coords, depots_min, depots_max, n_total, rng)
-
-    # chọn vị trí depot (index trong base) bằng farthest-first
     depot_indices_in_base = choose_depots(all_coords, k_depots)
+    
     depot_rows = []
     for i, idx in enumerate(depot_indices_in_base):
         row = base.iloc[idx]
         depot_rows.append({
-            "id": i,
-            "addr": f"DEPOT.{i}",
-            "cluster": 0,
-            "demand_delivery": 0,
-            "demand_pickup": 0,
-            "x": float(row["x"]),
-            "y": float(row["y"]),
-            "is_depot": True
+            "id": i, "addr": f"DEPOT.{i}", "cluster": 0, "demand_delivery": 0, "demand_pickup": 0,
+            "x": float(row["x"]), "y": float(row["y"]), "is_depot": True
         })
 
-    # khách = các điểm gốc còn lại
     mask = np.ones(n_total, dtype=bool)
     mask[depot_indices_in_base] = False
     customers_df = base.loc[mask].copy().reset_index(drop=True)
-
-    # nếu số khách lẻ (trong trường hợp bất khả kháng), bỏ 1 khách cuối
     if len(customers_df) % 2 == 1:
         customers_df = customers_df.iloc[:-1, :].reset_index(drop=True)
 
     n_customers = len(customers_df)
     n_orders = n_customers // 2
-    if n_orders == 0:
-        raise ValueError("Paired construction failed: not enough customers after depot selection.")
-
-    # shuffle khách và chia thành cặp (P,D)
     perm = rng.permutation(n_customers)
     customers_df = customers_df.iloc[perm].reset_index(drop=True)
-
-    # lượng hàng per-order
     order_sizes = _sample_order_sizes(rng, n_orders, order_qty_candidates, order_qty_probs, min_amount=1)
 
-    # ---------- REPLACE THIS WHOLE BLOCK ----------
-
-    # lượng hàng per-order
-    order_sizes = _sample_order_sizes(rng, n_orders, order_qty_candidates, order_qty_probs, min_amount=1)
-
-    # TẠO DANH SÁCH NODE TẠM (2*n), mỗi đơn -> 1 P + 1 D, TOÀN BỘ DÙNG TỌA ĐỘ GỐC
     pd_tmp_nodes = []
     for oid in range(n_orders):
-        rP = customers_df.iloc[2 * oid + 0]   # khách thứ 1 trong cặp
-        rD = customers_df.iloc[2 * oid + 1]   # khách thứ 2 trong cặp
+        rP = customers_df.iloc[2 * oid + 0]
+        rD = customers_df.iloc[2 * oid + 1]
         qty = int(order_sizes[oid])
-
-        # (tuỳ chọn) đảo vai P/D ngẫu nhiên để tránh bias
-        if rng.rand() < 0.5:
-            rP, rD = rD, rP
+        if rng.rand() < 0.5: rP, rD = rD, rP
 
         pd_tmp_nodes.append({
-            "tmp_oid": oid, "role": "P",
-            "addr": f"P.{oid}",
-            "cluster": int(rP.get("cluster", 0)),
-            "demand_delivery": 0,
-            "demand_pickup": qty,
-            "x": float(rP["x"]), "y": float(rP["y"]),
-            "is_depot": False,
+            "tmp_oid": oid, "role": "P", "addr": f"P.{oid}",
+            "cluster": int(rP.get("cluster", 0)), "demand_delivery": 0, "demand_pickup": qty,
+            "x": float(rP["x"]), "y": float(rP["y"]), "is_depot": False,
         })
         pd_tmp_nodes.append({
-            "tmp_oid": oid, "role": "D",
-            "addr": f"D.{oid}",
-            "cluster": int(rD.get("cluster", 0)),
-            "demand_delivery": qty,
-            "demand_pickup": 0,
-            "x": float(rD["x"]), "y": float(rD["y"]),
-            "is_depot": False,
+            "tmp_oid": oid, "role": "D", "addr": f"D.{oid}",
+            "cluster": int(rD.get("cluster", 0)), "demand_delivery": qty, "demand_pickup": 0,
+            "x": float(rD["x"]), "y": float(rD["y"]), "is_depot": False,
         })
-
-    # *** SHUFFLE TOÀN BỘ 2*n NODE TRƯỚC KHI GÁN ID ***
     rng.shuffle(pd_tmp_nodes)
 
-    # GÁN ID: depots trước, rồi các node P/D đã shuffle
     next_id = len(depot_rows)
     rows, id_map = [], {}
     for nd in pd_tmp_nodes:
@@ -648,7 +483,6 @@ def synthesize_instance_pd_paired_from_original_nodes(
         id_map[(nd["tmp_oid"], nd["role"])] = next_id
         next_id += 1
 
-    # orders.csv: map lại theo id_map
     orders = []
     for oid in range(n_orders):
         orders.append({
@@ -658,172 +492,30 @@ def synthesize_instance_pd_paired_from_original_nodes(
             "quantity": int(order_sizes[oid]),
         })
     orders_df = pd.DataFrame(orders)
-
-    # nodes để ghi ra: depots + toàn bộ rows (đã có demand_* đúng & ĐÃ SHUFFLE)
     full_nodes = pd.DataFrame(depot_rows + rows)
 
-    # nodes & TW/service
-    full_nodes = with_service_and_tw(
-        full_nodes,
-        service_range=service_range,
-        tw=tw_enabled,
-        tw_open_range=tw_open_range,
-        tw_close_range=tw_close_range,
-        tw_min_width=tw_min_width
-    )
+    full_nodes = with_service_and_tw(full_nodes, service_range, tw_enabled, tw_open_range, tw_close_range, tw_min_width)
     if tw_enabled:
-        full_nodes = _ensure_pd_order_tw(
-            full_nodes, orders_df,
-            travel_speed_units_per_min=travel_speed_units_per_min,
-            tw_min_width=tw_min_width
-        )
+        full_nodes = _ensure_pd_order_tw(full_nodes, orders_df, travel_speed_units_per_min, tw_min_width)
 
-    # vehicles
     depot_ids = full_nodes[full_nodes["is_depot"]]["id"].tolist()
-    veh_df = gen_vehicle_table(
-        depot_ids=depot_ids,
-        per_depot_min=veh_per_depot_min, per_depot_max=veh_per_depot_max,
-        cap_choices=cap_choices, start_min=veh_start, end_max=veh_end,
-        var_cost=veh_var_cost
-    )
+    veh_df = gen_vehicle_table(depot_ids, veh_per_depot_min, veh_per_depot_max, cap_choices, veh_start, veh_end, veh_var_cost)
 
-    prohib_syn = pd.DataFrame(columns=["from_id", "to_id"])  # caller có thể ghi đè bằng gốc
-    meta = {
-        "source": "expanded_from_original_nodes_PD_pairs",
-        "created_at": datetime.utcnow().isoformat() + "Z",
-        "n_orders": int(n_orders),
-        "n_nodes": int(len(full_nodes)),
-        "n_customers": int(len(full_nodes) - len(depot_ids)),
-        "n_depots": int(len(depot_ids)),
-        "n_vehicles": int(len(veh_df)),
-        "type": "multi_depot_multi_vehicle_with_time_windows" if tw_enabled else "multi_depot_multi_vehicle",
-        "time_window_units": "minutes_from_midnight",
-        "tw_penalty_per_min": float(tw_penalty_per_min),
-        "service_time_units": "minutes",
-        "travel_speed_units_per_min": float(travel_speed_units_per_min),
-        "distance_units": "euclidean (coordinate units)",
-        "pd_paired": True,
-        "coords_from_original": True
-    }
-    return full_nodes, veh_df, prohib_syn, meta, orders_df
-
-
-# ------------------------ Paired PD synthesizer (Synthetic) ------------------------
-def synthesize_instance_pd_paired(
-    nodes_df_base: pd.DataFrame,
-    n_orders_target: int,
-    n_clusters_min: int, n_clusters_max: int,
-    area_jitter: float,
-    depots_min: int, depots_max: int,
-    service_range,
-    tw_enabled: bool, tw_open_range, tw_close_range, tw_min_width: int,
-    cap_choices,
-    veh_start: int, veh_end: int, veh_var_cost: float,
-    veh_per_depot_min: int, veh_per_depot_max: int,
-    order_qty_candidates, order_qty_probs,
-    tw_penalty_per_min: float,
-    rng: np.random.RandomState,
-    travel_speed_units_per_min: float = 60.0,
-):
-    """
-    (Synthetic) Sinh n_orders_target đơn; mỗi đơn -> 2 node (P,D), có thể sinh mới toạ độ.
-    """
-    base = nodes_df_base[nodes_df_base["id"] != 0].copy()
-    centers = base.groupby("cluster")[["x", "y"]].mean().reset_index()
-    base_centers = centers[["x", "y"]].to_numpy()
-
-    # Cụm khách
-    n_clusters = int(np.clip(rng.randint(n_clusters_min, n_clusters_max + 1), n_clusters_min, n_clusters_max))
-    chosen = rng.choice(len(base_centers), size=n_clusters, replace=True)
-    cluster_centers = base_centers[chosen]
-
-    # Depots từ gốc (không bắt buộc parity trong synthetic)
-    all_coords = base[["x", "y"]].to_numpy()
-    k_depots = int(rng.randint(depots_min, depots_max + 1))
-    depot_indices = choose_depots(all_coords, k_depots)
-    depot_rows = []
-    for i, idx in enumerate(depot_indices):
-        depot_rows.append({
-            "id": i, "addr": f"DEPOT.{i}", "cluster": 0,
-            "demand_delivery": 0, "demand_pickup": 0,
-            "x": float(all_coords[idx, 0]), "y": float(all_coords[idx, 1]),
-            "is_depot": True
-        })
-
-    # Orders & nodes (sinh mới quanh cluster)
-    order_sizes = _sample_order_sizes(rng, n_orders_target, order_qty_candidates, order_qty_probs, min_amount=1)
-    pd_rows, orders_df, next_id = _build_pd_nodes_shuffled(
-        rng=rng,
-        order_sizes=order_sizes,
-        cluster_centers=cluster_centers,
-        area_jitter=area_jitter,
-        start_node_id=len(depot_rows),
-    )
-    full_nodes = pd.DataFrame(depot_rows + pd_rows)
-
-    # Service & TW
-    full_nodes = with_service_and_tw(
-        full_nodes,
-        service_range=service_range,
-        tw=tw_enabled,
-        tw_open_range=tw_open_range,
-        tw_close_range=tw_close_range,
-        tw_min_width=tw_min_width
-    )
-    if tw_enabled:
-        full_nodes = _ensure_pd_order_tw(
-            full_nodes, orders_df,
-            travel_speed_units_per_min=travel_speed_units_per_min,
-            tw_min_width=tw_min_width
-        )
-
-    # Vehicles
-    depot_ids = full_nodes[full_nodes["is_depot"]]["id"].tolist()
-    veh_df = gen_vehicle_table(
-        depot_ids=depot_ids,
-        per_depot_min=veh_per_depot_min, per_depot_max=veh_per_depot_max,
-        cap_choices=cap_choices, start_min=veh_start, end_max=veh_end,
-        var_cost=veh_var_cost
-    )
-
-    prohib_syn = pd.DataFrame(columns=["from_id", "to_id"])
-    meta = {
-        "source": "synthetic_from_Osaba_like_PD_pairs",
-        "created_at": datetime.utcnow().isoformat() + "Z",
-        "n_orders": int(n_orders_target),
-        "n_nodes": int(len(full_nodes)),
-        "n_customers": int(len(full_nodes) - len(depot_ids)),
-        "n_depots": int(len(depot_ids)),
-        "n_vehicles": int(len(veh_df)),
-        "type": "multi_depot_multi_vehicle_with_time_windows" if tw_enabled else "multi_depot_multi_vehicle",
-        "time_window_units": "minutes_from_midnight",
-        "tw_penalty_per_min": float(tw_penalty_per_min),
-        "service_time_units": "minutes",
-        "travel_speed_units_per_min": float(travel_speed_units_per_min),
-        "distance_units": "euclidean (coordinate units)",
-        "clusters": int(n_clusters),
-        "pd_paired": True
-    }
-    return full_nodes, veh_df, prohib_syn, meta, orders_df
+    return full_nodes, veh_df, pd.DataFrame(columns=["from_id", "to_id"]), {}, orders_df
 
 
 # ------------------------ Base normalization ------------------------
 def _standardize_base_nodes(nodes_df: pd.DataFrame) -> pd.DataFrame:
+    """Xóa cột demand để đảm bảo tính chất base_modified."""
     out = nodes_df.copy()
+    # Các thông số TW sẽ được ghi đè bởi with_service_and_tw
     out["is_depot"] = out["id"] == 0
     out["service_time"] = 0
-    out["tw_open"] = 0
-    out["tw_close"] = 1439
+    
+    # Drop cột demand
+    cols_to_drop = [c for c in ["demand_delivery", "demand_pickup", "DemEnt", "DemRec"] if c in out.columns]
+    out = out.drop(columns=cols_to_drop)
     return out
-
-
-def _default_base_vehicle_df(var_cost: float) -> pd.DataFrame:
-    cap = 240
-    return pd.DataFrame([{
-        "vehicle_id": 0, "depot_id": 0, "capacity": cap,
-        "start_time": 0, "end_time": 1439, "fixed_cost": float(100 * cap),
-        "variable_cost_per_distance": var_cost
-    }])
 
 
 # ------------------------ Pipeline ------------------------
@@ -840,29 +532,59 @@ def process_one(xml_path: Path, out_root: Path, args):
     if prohib_df is None or len(prohib_df) == 0:
         prohib_df = pd.DataFrame(columns=["from_id", "to_id"])
 
-    # Totals gốc (customers only)
-    orig_delivery_total = float(nodes_df.loc[nodes_df["id"] != 0, "demand_delivery"].sum())
-    k = float(args.del_mult_from_original)
-    ratio = float(args.pd_target_ratio)
-    target_delivery_total = k * orig_delivery_total
-    target_pickup_total = (target_delivery_total / ratio) if ratio > 0 else None
-
-    # --- base_modified (schema unify only)
-    base_dir = this_out / "base"
+    # --- BASE MODIFIED: Tên folder là "base_modified" ---
+    base_dir = this_out / "base_modified"
     base_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 1. Base Nodes (với Logic Multi-Depot mới)
+    all_coords = nodes_df[["x", "y"]].to_numpy()
+    k_depots = rng.randint(args.depots_min, args.depots_max + 1)
+    depot_indices = choose_depots(all_coords, k_depots)
+    
     base_nodes_std = _standardize_base_nodes(nodes_df)
-    base_vehicles = _default_base_vehicle_df(var_cost=float(args.veh_var_cost))
-    base_meta = {
-        "source": xml_path.name, "created_at": datetime.utcnow().isoformat() + "Z",
-        "type": "single_depot_single_vehicle_with_time_windows",
-        "time_window_units": "minutes_from_midnight", "tw_penalty_per_min": float(args.tw_penalty_per_min),
-        "travel_speed_units_per_min": 100.0, "service_time_units": "minutes",
-        "distance_units": "euclidean (coordinate units)", "n_depots": 1, "n_vehicles": 1,
-        "note": "Base mirrors original amounts; PD-paired applies to expanded/synthetic sets."
-    }
-    write_instance(base_dir, base_nodes_std, base_vehicles, prohib_df, base_meta, orders_df=None)
+    
+    # Set depot mới
+    base_nodes_std["is_depot"] = False 
+    base_nodes_std.loc[depot_indices, "is_depot"] = True
+    
+    base_depot_ids = base_nodes_std.loc[depot_indices, "id"].tolist()
+    
+    # --- FIXED: ÁP DỤNG TIME WINDOWS CHO BASE NODES ---
+    base_nodes_std = with_service_and_tw(
+        base_nodes_std,
+        service_range=(args.service_min, args.service_max),
+        tw=(not args.no_tw),
+        tw_open_range=(args.tw_open_min, args.tw_open_max),
+        tw_close_range=(args.tw_close_min, args.tw_close_max),
+        tw_min_width=args.tw_min_width,
+        rng=rng
+    )
+    
+    # 2. Complex Orders 
+    base_orders_df = _generate_complex_orders_for_base(nodes_df, base_depot_ids, rng)
+    
+    # 3. Vehicles (FIXED: có allowed_goods_types từ tập hợp hợp lệ)
+    base_vehicles = gen_vehicle_table(
+        depot_ids=base_depot_ids,
+        per_depot_min=args.veh_per_depot_min,
+        per_depot_max=args.veh_per_depot_max,
+        cap_choices=args.veh_capacities,
+        start_min=args.veh_start,
+        end_max=args.veh_end,
+        var_cost=float(args.veh_var_cost),
+        rng=rng
+    )
 
-    # --- base_mdmv_tw_modified (PAIRED, NO NEW COORDS)
+    base_meta = {
+        "source": xml_path.name,
+        "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "type": "multi_depot_multi_vehicle_with_time_windows",
+        "n_depots": len(base_depot_ids),
+        "note": "Base Modified: Multi-Depot, Random TW applied, Goods Types in Vehicles (No 1 & 4 together)."
+    }
+    write_instance(base_dir, base_nodes_std, base_vehicles, prohib_df, base_meta, orders_df=base_orders_df)
+
+    # --- EXPANSION (PAIRED) ---
     if args.expand_base:
         md_nodes, vehicles_df, prohib_used, meta, orders_df = synthesize_instance_pd_paired_from_original_nodes(
             nodes_df_base=nodes_df,
@@ -875,105 +597,19 @@ def process_one(xml_path: Path, out_root: Path, args):
             cap_choices=args.veh_capacities,
             veh_start=args.veh_start, veh_end=args.veh_end, veh_var_cost=args.veh_var_cost,
             veh_per_depot_min=args.veh_per_depot_min, veh_per_depot_max=args.veh_per_depot_max,
-            order_qty_candidates=np.asarray(args.dem_delivery_candidates, dtype=int),  # dùng chung candidates cho size
+            order_qty_candidates=np.asarray(args.dem_delivery_candidates, dtype=int),
             order_qty_probs=np.asarray(args.dem_delivery_probs, dtype=float),
             tw_penalty_per_min=args.tw_penalty_per_min,
             rng=np.random.RandomState(args.seed + offset + 1234),
             travel_speed_units_per_min=60.0,
         )
 
-        if args.lock_both_totals:
-            cur_total = float(md_nodes.loc[~md_nodes["is_depot"], "demand_delivery"].sum())
-            if cur_total > 0 and target_delivery_total > 0:
-                s = target_delivery_total / cur_total
-                for col in ["demand_delivery", "demand_pickup"]:
-                    vals = md_nodes[col].astype(float)
-                    pos = (vals > 0)
-                    vals.loc[pos] = np.maximum(np.round(vals.loc[pos] * s).astype(int), 1)
-                    md_nodes[col] = vals.astype(int)
-                # sync quantity trong orders_df
-                id2qty = md_nodes.set_index("id")
-                orders_df["quantity"] = [
-                    int(max(id2qty.at[r["pickup_node_id"], "demand_pickup"],
-                            id2qty.at[r["delivery_node_id"], "demand_delivery"]))
-                    for _, r in orders_df.iterrows()
-                ]
-
         base_exp_dir = this_out / "base_mdmv_tw_modified"
         meta.update({
             "source": xml_path.name,
-            "original_total_delivery": float(nodes_df.loc[nodes_df["id"] != 0, "demand_delivery"].sum()),
-            "target_delivery_total": target_delivery_total,
-            "target_pickup_total": target_pickup_total,
-            "delivery_mult_from_original": k,
-            "lock_both_totals": bool(args.lock_both_totals),
             "coords_from_original": True
         })
-        # GIỮ nguyên prohibited arcs gốc cho bản mở rộng (như yêu cầu trước)
         write_instance(base_exp_dir, md_nodes, vehicles_df, prohib_df, meta, orders_df=orders_df)
-
-    # --- synthetic_*_mdmv_tw (PAIRED, có thể sinh mới)
-    for n in args.synth_sizes:
-        n_orders = max(1, int(n // 2))
-        ndf, vdf, pdf_empty, meta_syn, orders_df = synthesize_instance_pd_paired(
-            nodes_df_base=nodes_df, n_orders_target=int(n_orders),
-            n_clusters_min=args.synth_clusters_min, n_clusters_max=args.synth_clusters_max,
-            area_jitter=float(args.synth_area_jitter),
-            depots_min=args.depots_min, depots_max=args.depots_max,
-            service_range=(args.service_min, args.service_max),
-            tw_enabled=(not args.no_tw),
-            tw_open_range=(args.tw_open_min, args.tw_open_max),
-            tw_close_range=(args.tw_close_min, args.tw_close_max),
-            tw_min_width=args.tw_min_width,
-            cap_choices=args.veh_capacities,
-            veh_start=args.veh_start, veh_end=args.veh_end, veh_var_cost=args.veh_var_cost,
-            veh_per_depot_min=args.veh_per_depot_min, veh_per_depot_max=args.veh_per_depot_max,
-            order_qty_candidates=np.asarray(args.dem_delivery_candidates, dtype=int),
-            order_qty_probs=np.asarray(args.dem_delivery_probs, dtype=float),
-            tw_penalty_per_min=args.tw_penalty_per_min,
-            rng=np.random.RandomState(args.seed + offset + int(n)),
-            travel_speed_units_per_min=60.0,
-        )
-
-        if args.lock_both_totals:
-            cur_total = float(ndf.loc[~ndf["is_depot"], "demand_delivery"].sum())
-            if cur_total > 0 and target_delivery_total > 0:
-                s = target_delivery_total / cur_total
-                for col in ["demand_delivery", "demand_pickup"]:
-                    vals = ndf[col].astype(float)
-                    pos = (vals > 0)
-                    vals.loc[pos] = np.maximum(np.round(vals.loc[pos] * s).astype(int), 1)
-                    ndf[col] = vals.astype(int)
-                id2qty = ndf.set_index("id")
-                orders_df["quantity"] = [
-                    int(max(id2qty.at[r["pickup_node_id"], "demand_pickup"],
-                            id2qty.at[r["delivery_node_id"], "demand_delivery"]))
-                    for _, r in orders_df.iterrows()
-                ]
-
-        meta_syn.update({
-            "original_total_delivery": float(nodes_df.loc[nodes_df["id"] != 0, "demand_delivery"].sum()),
-            "target_delivery_total": target_delivery_total,
-            "target_pickup_total": target_pickup_total,
-            "delivery_mult_from_original": k,
-            "lock_both_totals": bool(args.lock_both_totals),
-        })
-
-        inst_dir = this_out / f"synthetic_{n}_mdmv_tw"
-        prohib_to_write = prohib_df if args.keep_prohibited_arcs else pd.DataFrame(columns=["from_id", "to_id"])
-        write_instance(inst_dir, ndf, vdf, prohib_to_write, meta_syn, orders_df=orders_df)
-
-    # README
-    readme = this_out / "README.md"
-    readme.write_text(f"""# Osaba VRP — Normalized & Expanded for `{xml_path.name}` ({datetime.utcnow().isoformat()}Z)
-
-- Base: giữ nguyên schema, không paired.
-- Expanded (base_mdmv_tw_modified): **paired PD**, KHÔNG sinh toạ độ mới (dùng toạ độ gốc).
-  Depot cũng lấy từ các điểm gốc; số khách được đảm bảo **chẵn** để ghép P↔D.
-- Synthetic: **paired PD** (có thể sinh toạ độ mới), có `orders.csv`.
-- Nếu --lock-both-totals: scale quantity toàn cục để đạt target_delivery_total (đồng bộ lại orders.csv).
-- Vehicle fixed_cost = 100 × capacity (bỏ qua --veh-fixed-cost).
-""", encoding="utf-8")
 
     print(f"[OK] Processed: {xml_path} -> {this_out}")
 

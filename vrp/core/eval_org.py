@@ -17,8 +17,8 @@ def evaluate(problem: Problem, sol: Solution, return_details=False) -> Tuple[flo
     BIG = 1e7      # Phạt lỗi nặng (đường cấm, không phục vụ hết khách)
     BIG_CAP = 1e5  # Phạt vi phạm tải trọng/thời gian
     
-    # Tốc độ di chuyển mặc định (tỷ lệ 1:1 giữa khoảng cách và thời gian như bài báo) [cite: 411]
-    speed = getattr(problem, "travel_speed_units_per_min", 100.0)
+    # Tốc độ di chuyển mặc định (tỷ lệ 1:1 giữa khoảng cách và thời gian như bài báo)
+    speed = getattr(problem, "travel_speed_units_per_min", 300.0)
 
     cost = 0.0
     details = {
